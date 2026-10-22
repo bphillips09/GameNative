@@ -16,6 +16,7 @@ import app.gamenative.events.AndroidEvent
 import app.gamenative.service.SteamService
 import app.gamenative.service.amazon.AmazonConstants
 import app.gamenative.service.amazon.AmazonService
+import app.gamenative.service.xbox.XboxService
 import app.gamenative.service.download.GameDownloadService
 import app.gamenative.service.epic.EpicConstants
 import app.gamenative.service.epic.EpicService
@@ -211,6 +212,19 @@ class DownloadsViewModel @Inject constructor(
         return Pair(name, icon)
     }
 
+    private fun getXboxMetadata(productId: String): Pair<String, String> {
+        val key = downloadKey(GameSource.XBOX, productId)
+        val cachedName = gameNameCache[key]
+        val cachedIcon = gameIconCache[key]
+        if (cachedName != null && cachedIcon != null) return Pair(cachedName, cachedIcon)
+
+        val game = XboxService.gameByProductId(productId)
+        val name = cachedName ?: (game?.title ?: "Xbox Game").also { gameNameCache[key] = it }
+        val icon = cachedIcon ?: (game?.boxArt ?: "").also { gameIconCache[key] = it }
+
+        return Pair(name, icon)
+    }
+
     suspend fun resolveLibraryItem(gameSource: GameSource, appId: String): LibraryItem? {
         val libraryAppId = "${gameSource.name}_$appId"
 
@@ -279,6 +293,24 @@ class DownloadsViewModel @Inject constructor(
             GameSource.CUSTOM_GAME -> {
                 CustomGameScanner.scanAsLibraryItems(query = "")
                     .firstOrNull { it.appId == libraryAppId }
+            }
+            GameSource.XBOX -> {
+                // Downloads are keyed by product ID, like Amazon's.
+                val game = XboxService.gameByProductId(appId)
+                    ?: appId.toIntOrNull()?.let { XboxService.gameByAppId(it) }
+                game?.let {
+                    val boxArt = it.boxArt.orEmpty()
+                    val hero = it.hero.orEmpty().ifEmpty { boxArt }
+                    LibraryItem(
+                        appId = "${GameSource.XBOX.name}_${it.appId}",
+                        name = it.title,
+                        iconHash = boxArt,
+                        capsuleImageUrl = boxArt,
+                        headerImageUrl = hero,
+                        heroImageUrl = hero,
+                        gameSource = GameSource.XBOX,
+                    )
+                }
             }
         }
     }
@@ -366,6 +398,7 @@ class DownloadsViewModel @Inject constructor(
             GameSource.GOG -> gogGameDao.getById(appId)?.isInstalled == true
             GameSource.AMAZON -> amazonGameDao.getByProductId(appId)?.isInstalled == true
             GameSource.CUSTOM_GAME -> false
+            GameSource.XBOX -> (XboxService.gameByProductId(appId) ?: appId.toIntOrNull()?.let { XboxService.gameByAppId(it) })?.isInstalled == true
         }
     }
 
@@ -527,6 +560,20 @@ class DownloadsViewModel @Inject constructor(
                 liveDownloads[key] = buildPartialDownloadItem(productId, GameSource.AMAZON, name, icon)
             }
 
+            for ((productId, info) in XboxService.getActiveDownloads()) {
+                val (name, icon) = getXboxMetadata(productId)
+                val item = buildActiveDownloadItem(productId, GameSource.XBOX, name, icon, info)
+                liveDownloads[item.uniqueId] = item
+                activeBindings[item.uniqueId] = ActiveDownloadBinding(productId, GameSource.XBOX, name, icon, info)
+            }
+
+            for (productId in XboxService.getPartialDownloads()) {
+                val key = downloadKey(GameSource.XBOX, productId)
+                if (liveDownloads.containsKey(key)) continue
+                val (name, icon) = getXboxMetadata(productId)
+                liveDownloads[key] = buildPartialDownloadItem(productId, GameSource.XBOX, name, icon)
+            }
+
             val disappearedKeys = lastTrackedDownloads.keys - liveDownloads.keys
             for (key in disappearedKeys) {
                 val previousItem = lastTrackedDownloads[key] ?: continue
@@ -609,6 +656,8 @@ class DownloadsViewModel @Inject constructor(
             GameSource.GOG -> GOGService.cancelDownload(item.appId)
             GameSource.AMAZON -> AmazonService.cancelDownload(item.appId)
             GameSource.CUSTOM_GAME -> Unit
+            // Xbox downloads are managed on the Xbox screen.
+            GameSource.XBOX -> XboxService.cancelDownload(item.appId)
         }
     }
 
@@ -667,6 +716,10 @@ class DownloadsViewModel @Inject constructor(
             }
 
             GameSource.CUSTOM_GAME -> Unit
+            GameSource.XBOX -> {
+                val result = XboxService.downloadGame(localizedContext, item.appId)
+                result.exceptionOrNull()?.message?.let { recentFailureMessages[key] = it }
+            }
         }
     }
 
@@ -715,6 +768,10 @@ class DownloadsViewModel @Inject constructor(
             }
 
             GameSource.CUSTOM_GAME -> Unit
+            GameSource.XBOX -> {
+                val game = XboxService.gameByProductId(item.appId) ?: return
+                GameDownloadService.enqueueDownload(GameSource.XBOX, item.appId, installPath = game.installPath)
+            }
         }
     }
 
@@ -838,6 +895,10 @@ class DownloadsViewModel @Inject constructor(
             }
 
             GameSource.CUSTOM_GAME -> Unit
+            GameSource.XBOX -> {
+                XboxService.deleteGame(appContext, appId)
+                scheduleRefreshDownloads()
+            }
         }
     }
 }

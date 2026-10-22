@@ -115,6 +115,8 @@ import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.PlatformAuthUiHelpers
 import app.gamenative.ui.util.PlatformLogoutCallbacks
 import app.gamenative.service.amazon.AmazonService
+import app.gamenative.service.xbox.XboxService
+import app.gamenative.ui.screen.auth.XboxOAuthActivity
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import app.gamenative.utils.CustomGameScanner
@@ -329,6 +331,19 @@ private fun LibraryScreenContent(
                 onDialogClose = { },
             )
         }
+    }
+
+    // Xbox sign-in runs entirely in XboxOAuthActivity (the Xodus backend stores the account),
+    // so a successful result only needs a library sync.
+    val xboxSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) {
+            result.data?.getStringExtra(XboxOAuthActivity.EXTRA_ERROR)?.let { SnackbarManager.show(it) }
+            return@rememberLauncherForActivityResult
+        }
+        SnackbarManager.show(context.getString(R.string.xbox_login_success_title))
+        XboxService.triggerLibrarySync(context)
     }
 
     var selectedAppId by remember { mutableStateOf<String?>(null) }
@@ -1030,6 +1045,7 @@ private fun LibraryScreenContent(
                     LibraryTab.GOG -> !GOGService.hasStoredCredentials(context)
                     LibraryTab.EPIC -> !EpicService.hasStoredCredentials(context)
                     LibraryTab.AMAZON -> !AmazonService.hasStoredCredentials(context)
+                    LibraryTab.XBOX -> !XboxService.hasStoredCredentials(context)
                     LibraryTab.LOCAL -> PrefManager.customGamesCount == 0
                     else -> false
                 }
@@ -1060,12 +1076,17 @@ private fun LibraryScreenContent(
                             R.string.amazon_settings_login_title,
                             { amazonOAuthLauncher.launch(Intent(context, AmazonOAuthActivity::class.java)) },
                         )
+                        LibraryTab.XBOX -> Triple(
+                            R.string.library_source_not_logged_in_xbox,
+                            R.string.xbox_settings_login_title,
+                            { xboxSignInLauncher.launch(Intent(context, XboxOAuthActivity::class.java)) },
+                        )
                         LibraryTab.LOCAL -> Triple(
                             R.string.library_source_no_custom_games,
                             R.string.add_custom_game_dialog_title,
                             onAddCustomGameClick,
                         )
-                        else -> throw IllegalStateException("showEmptyStateSplash is true only for Steam/GOG/Epic/Amazon/LOCAL")
+                        else -> throw IllegalStateException("showEmptyStateSplash is true only for Steam/GOG/Epic/Amazon/Xbox/LOCAL")
                     }
                     LibrarySourceNotLoggedInSplash(
                         messageResId = messageResId,
@@ -1176,6 +1197,7 @@ private fun LibraryScreenContent(
                             LibraryTab.GOG to state.gogCount,
                             LibraryTab.EPIC to state.epicCount,
                             LibraryTab.AMAZON to state.amazonCount,
+                            LibraryTab.XBOX to state.xboxCount,
                             LibraryTab.LOCAL to state.localCount,
                         ),
                         onTabSelected = onTabChanged,
@@ -1329,6 +1351,7 @@ private fun LibraryScreenContent(
             val gogLoggedIn = app.gamenative.service.gog.GOGAuthManager.hasStoredCredentials(context)
             val epicLoggedIn = app.gamenative.service.epic.EpicAuthManager.hasStoredCredentials(context)
             val amazonLoggedIn = app.gamenative.service.amazon.AmazonAuthManager.hasStoredCredentials(context)
+            val xboxLoggedIn = XboxService.hasStoredCredentials(context)
 
             SystemMenu(
                 isOpen = isSystemMenuOpen,
@@ -1341,6 +1364,7 @@ private fun LibraryScreenContent(
                 gogLoggedIn = gogLoggedIn,
                 epicLoggedIn = epicLoggedIn,
                 amazonLoggedIn = amazonLoggedIn,
+                xboxLoggedIn = xboxLoggedIn,
                 onGogLoginClick = {
                     gogOAuthLauncher.launch(Intent(context, GOGOAuthActivity::class.java))
                 },
@@ -1366,6 +1390,16 @@ private fun LibraryScreenContent(
                 },
                 onAmazonLogoutClick = {
                     PlatformAuthUiHelpers.logoutAmazon(
+                        context = context,
+                        scope = lifecycleScope,
+                        callbacks = PlatformLogoutCallbacks(),
+                    )
+                },
+                onXboxLoginClick = {
+                    xboxSignInLauncher.launch(Intent(context, XboxOAuthActivity::class.java))
+                },
+                onXboxLogoutClick = {
+                    PlatformAuthUiHelpers.logoutXbox(
                         context = context,
                         scope = lifecycleScope,
                         callbacks = PlatformLogoutCallbacks(),

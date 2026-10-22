@@ -43,6 +43,7 @@ class LibraryCountsTest {
                 epicGames = 0,
                 epicInstalledGames = 0,
                 amazonInstalledGames = 0,
+                xboxInstalledGames = 0,
             )
 
             // Wait on actual values (not a raw write count) so PrefManager.init's async cleanup

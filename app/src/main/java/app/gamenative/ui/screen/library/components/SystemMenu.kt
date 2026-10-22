@@ -261,12 +261,15 @@ fun SystemMenu(
     gogLoggedIn: Boolean,
     epicLoggedIn: Boolean,
     amazonLoggedIn: Boolean,
+    xboxLoggedIn: Boolean,
     onGogLoginClick: () -> Unit,
     onGogLogoutClick: () -> Unit,
     onEpicLoginClick: () -> Unit,
     onEpicLogoutClick: () -> Unit,
     onAmazonLoginClick: () -> Unit,
     onAmazonLogoutClick: () -> Unit,
+    onXboxLoginClick: () -> Unit,
+    onXboxLogoutClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -727,6 +730,26 @@ fun SystemMenu(
                             },
                             isDestructive = amazonLoggedIn,
                         )
+
+                        // Xbox (the backend is arm64-only)
+                        if (app.gamenative.ui.enums.LibraryTab.xboxSupported) {
+                            SystemMenuItem(
+                                text = stringResource(
+                                    if (xboxLoggedIn) R.string.xbox_settings_logout_title
+                                    else R.string.xbox_settings_login_title,
+                                ),
+                                icon = if (xboxLoggedIn) {
+                                    Icons.AutoMirrored.Filled.Logout
+                                } else {
+                                    Icons.AutoMirrored.Filled.Login
+                                },
+                                onClick = {
+                                    if (xboxLoggedIn) onXboxLogoutClick() else onXboxLoginClick()
+                                    onDismiss()
+                                },
+                                isDestructive = xboxLoggedIn,
+                            )
+                        }
                     }
 
                     // Gamepad hint at bottom (only on expanded screens)
@@ -798,12 +821,15 @@ private fun Preview_SystemMenu() {
                     gogLoggedIn = false,
                     epicLoggedIn = false,
                     amazonLoggedIn = false,
+                    xboxLoggedIn = false,
                     onGogLoginClick = { },
                     onGogLogoutClick = { },
                     onEpicLoginClick = { },
                     onEpicLogoutClick = { },
                     onAmazonLoginClick = { },
                     onAmazonLogoutClick = { },
+                    onXboxLoginClick = { },
+                    onXboxLogoutClick = { },
                 )
             }
         }

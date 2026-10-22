@@ -348,6 +348,10 @@ object ContainerStorageManager {
             GameSource.CUSTOM_GAME -> {
                 return@withContext Result.failure(UnsupportedOperationException("Custom games are not supported"))
             }
+
+            GameSource.XBOX -> {
+                return@withContext Result.failure(UnsupportedOperationException("Moving Xbox games is not supported yet"))
+            }
         }
 
         Timber.tag("ContainerStorageManager").i(
@@ -452,6 +456,14 @@ object ContainerStorageManager {
                 }
 
                 GameSource.CUSTOM_GAME -> Result.failure(UnsupportedOperationException("Custom games are not supported"))
+
+                GameSource.XBOX -> {
+                    val game = app.gamenative.service.xbox.XboxService.gameByAppId(gameId)
+                        ?: return@withContext Result.failure(Exception("Xbox game not found"))
+                    val result = app.gamenative.service.xbox.XboxService.deleteGame(context, game.productId)
+                    if (result.isSuccess && entry.hasContainer) removeContainer(context, entry.containerId)
+                    result
+                }
             }
 
             if (result.isSuccess) {
@@ -780,6 +792,7 @@ object ContainerStorageManager {
             }
 
             GameSource.CUSTOM_GAME -> null
+            GameSource.XBOX -> null
         }
     }
 
@@ -800,6 +813,7 @@ object ContainerStorageManager {
             GameSource.EPIC -> listOf(EpicConstants.internalEpicGamesPath(context))
             GameSource.AMAZON -> listOf(AmazonConstants.internalAmazonGamesPath(context))
             GameSource.CUSTOM_GAME -> emptyList()
+            GameSource.XBOX -> listOf(File(context.dataDir, "Xbox").path)
         }
 
         if (internalRoots.any { root -> isPathWithin(normalizedPath, root) }) {
@@ -823,6 +837,9 @@ object ContainerStorageManager {
                 GameSource.EPIC -> if (PrefManager.externalStoragePath.isNotBlank()) add(EpicConstants.externalEpicGamesPath())
                 GameSource.AMAZON -> if (PrefManager.externalStoragePath.isNotBlank()) add(AmazonConstants.externalAmazonGamesPath())
                 GameSource.CUSTOM_GAME -> Unit
+                GameSource.XBOX -> if (PrefManager.externalStoragePath.isNotBlank()) {
+                    add(File(PrefManager.externalStoragePath, "Xbox/games").path)
+                }
             }
 
             inferExternalInstallRoot(gameSource, normalizedPath)?.let(::add)
@@ -844,6 +861,7 @@ object ContainerStorageManager {
             GameSource.EPIC -> listOf("Epic", "games")
             GameSource.AMAZON -> listOf("Amazon", "games")
             GameSource.CUSTOM_GAME -> emptyList()
+            GameSource.XBOX -> listOf("Xbox", "games")
         }
         if (expectedRootSegments.isEmpty()) return null
 
@@ -964,6 +982,7 @@ object ContainerStorageManager {
         containerId.startsWith("GOG_") -> GameSource.GOG
         containerId.startsWith("EPIC_") -> GameSource.EPIC
         containerId.startsWith("AMAZON_") -> GameSource.AMAZON
+        containerId.startsWith("XBOX_") -> GameSource.XBOX
         else -> null
     }
 
@@ -1027,6 +1046,16 @@ object ContainerStorageManager {
                     name = game?.title,
                     installPath = game?.installPath,
                     iconUrl = game?.artUrl.orEmpty(),
+                    known = game != null,
+                )
+            }
+
+            GameSource.XBOX -> {
+                val game = app.gamenative.service.xbox.XboxService.gameByAppId(gameId)
+                ResolvedGame(
+                    name = game?.title,
+                    installPath = game?.installPath,
+                    iconUrl = game?.boxArt.orEmpty(),
                     known = game != null,
                 )
             }

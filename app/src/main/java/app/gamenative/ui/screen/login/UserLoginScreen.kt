@@ -97,6 +97,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import app.gamenative.Constants
 import app.gamenative.ui.screen.auth.AmazonOAuthActivity
+import app.gamenative.service.xbox.XboxService
+import app.gamenative.ui.screen.auth.XboxOAuthActivity
 import app.gamenative.ui.screen.auth.EpicOAuthActivity
 import app.gamenative.ui.screen.auth.GOGOAuthActivity
 import app.gamenative.utils.PlatformOAuthHandlers
@@ -262,6 +264,19 @@ fun UserLoginScreen(
         }
     }
 
+    // Xbox sign-in runs entirely in XboxOAuthActivity (the Xodus backend stores the account).
+    val xboxSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) {
+            result.data?.getStringExtra(XboxOAuthActivity.EXTRA_ERROR)?.let { SnackbarManager.show(it) }
+            return@rememberLauncherForActivityResult
+        }
+        SnackbarManager.show(context.getString(R.string.xbox_login_success_title))
+        XboxService.triggerLibrarySync(context)
+        onPlatformSignedIn()
+    }
+
     LaunchedEffect(userLoginState.loginScreen, userLoginState.isLoggingIn, connectionState, userLoginState.isQrFailed) {
         if (connectionState == ConnectionState.CONNECTED && userLoginState.isLoggingIn.not()) {
             if (userLoginState.loginScreen != LoginScreen.TWO_FACTOR) {
@@ -304,6 +319,7 @@ fun UserLoginScreen(
         onLaunchGog = { gogOAuthLauncher.launch(Intent(context, GOGOAuthActivity::class.java)) },
         onLaunchEpic = { epicOAuthLauncher.launch(Intent(context, EpicOAuthActivity::class.java)) },
         onLaunchAmazon = { amazonOAuthLauncher.launch(Intent(context, AmazonOAuthActivity::class.java)) },
+        onLaunchXbox = { xboxSignInLauncher.launch(Intent(context, XboxOAuthActivity::class.java)) },
     )
 }
 
@@ -327,6 +343,7 @@ private fun UserLoginScreenContent(
     onLaunchGog: () -> Unit,
     onLaunchEpic: () -> Unit,
     onLaunchAmazon: () -> Unit,
+    onLaunchXbox: () -> Unit,
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val tertiaryColor = MaterialTheme.colorScheme.tertiary
@@ -529,7 +546,7 @@ private fun UserLoginScreenContent(
                 }
             }
 
-            // Or sign in with: Epic · GOG · Amazon · Skip login
+            // Or sign in with: Epic · GOG · Amazon · Xbox · Skip login
             if (
                 userLoginState.isLoggingIn.not() &&
                 userLoginState.loginResult != LoginResult.Success
@@ -569,6 +586,16 @@ private fun UserLoginScreenContent(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary,
                             )
+                        }
+                        // The Xbox backend is arm64-only.
+                        if (app.gamenative.ui.enums.LibraryTab.xboxSupported) {
+                            TextButton(onClick = onLaunchXbox) {
+                                Text(
+                                    text = "Xbox",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                         TextButton(onClick = onContinueOffline) {
                             Text(
@@ -991,6 +1018,7 @@ private fun Preview_UserLoginScreen(
                 onLaunchGog = { },
                 onLaunchEpic = { },
                 onLaunchAmazon = { },
+                onLaunchXbox = { },
             )
         }
     }
@@ -1028,6 +1056,7 @@ private fun Preview_UserLoginScreen_Landscape(
                 onLaunchGog = { },
                 onLaunchEpic = { },
                 onLaunchAmazon = { },
+                onLaunchXbox = { },
             )
         }
     }

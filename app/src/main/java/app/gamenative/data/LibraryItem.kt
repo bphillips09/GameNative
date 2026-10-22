@@ -8,7 +8,9 @@ enum class GameSource {
     CUSTOM_GAME,
     GOG,
     EPIC,
-    AMAZON
+    AMAZON,
+    /** Microsoft Store PC games (Xbox Play Anywhere, PC Game Pass) via the Xodus backend. */
+    XBOX,
     // Add other platforms here..
 }
 
@@ -79,6 +81,9 @@ data class LibraryItem(
                 iconHash
             }
             GameSource.AMAZON -> {
+                iconHash
+            }
+            GameSource.XBOX -> {
                 iconHash
             }
         }

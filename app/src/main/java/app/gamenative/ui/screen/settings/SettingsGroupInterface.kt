@@ -487,7 +487,7 @@ fun SettingsGroupInterface(
             },
         )
 
-        val configurableLibraryTabs = LibraryTab.configurableEntries
+        val configurableLibraryTabs = LibraryTab.configurableEntries.filter { it in LibraryTab.visibleEntries }
         val selectedLibraryTabIndices = configurableLibraryTabs.mapIndexedNotNull { index, tab ->
             index.takeIf { tab in libraryTabs }
         }

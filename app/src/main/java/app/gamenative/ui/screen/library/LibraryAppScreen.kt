@@ -175,6 +175,7 @@ import app.gamenative.ui.internal.fakeAppInfo
 import app.gamenative.ui.screen.library.appscreen.AmazonAppScreen
 import app.gamenative.ui.screen.library.appscreen.CustomGameAppScreen
 import app.gamenative.ui.screen.library.appscreen.EpicAppScreen
+import app.gamenative.ui.screen.library.appscreen.XboxAppScreen
 import app.gamenative.ui.screen.library.appscreen.GOGAppScreen
 import app.gamenative.ui.screen.library.appscreen.SteamAppScreen
 import app.gamenative.ui.screen.library.components.GameOptionsPanel
@@ -880,6 +881,7 @@ fun AppScreen(
             app.gamenative.data.GameSource.GOG -> GOGAppScreen()
             app.gamenative.data.GameSource.EPIC -> EpicAppScreen()
             app.gamenative.data.GameSource.AMAZON -> AmazonAppScreen()
+            app.gamenative.data.GameSource.XBOX -> XboxAppScreen()
         }
     }
 

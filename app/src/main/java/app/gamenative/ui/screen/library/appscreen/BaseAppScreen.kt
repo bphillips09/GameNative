@@ -1791,6 +1791,7 @@ abstract class BaseAppScreen {
             app.gamenative.data.GameSource.GOG -> app.gamenative.service.gog.GOGService.getDownloadInfo(displayInfo.gameId.toString())
             app.gamenative.data.GameSource.CUSTOM_GAME -> null // Custom games don't support downloads yet
             app.gamenative.data.GameSource.AMAZON -> app.gamenative.service.amazon.AmazonService.getDownloadInfoByAppId(libraryItem.gameId)
+            app.gamenative.data.GameSource.XBOX -> app.gamenative.service.xbox.XboxService.getDownloadInfoByAppId(libraryItem.gameId)
         }
 
         DisposableEffect(libraryItem.appId) {

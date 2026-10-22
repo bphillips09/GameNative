@@ -66,6 +66,8 @@ class PluviaApp : SplitCompatApplication() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        app.gamenative.service.xbox.XboxService.init(this)
+        app.gamenative.ui.enums.LibraryTab.xboxSupported = app.gamenative.service.xbox.XboxService.isSupported(this)
 
         preloadSystemLibraries()
 
@@ -101,6 +103,7 @@ class PluviaApp : SplitCompatApplication() {
 
         // Init our datastore preferences.
         PrefManager.init(this)
+        app.gamenative.service.xbox.XboxService.restoreAccountState(this)
         PlayBilling.init(this)
         NexusAuthManager.initialize(this)
         FrontendSyncManager.init(this)

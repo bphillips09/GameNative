@@ -44,6 +44,8 @@ import app.gamenative.db.dao.SteamUnlockedBranchDao
 import app.gamenative.db.dao.GOGGameDao
 import app.gamenative.db.dao.EpicGameDao
 import app.gamenative.db.dao.AmazonGameDao
+import app.gamenative.data.XboxGame
+import app.gamenative.db.dao.XboxGameDao
 
 const val DATABASE_NAME = "pluvia.db"
 
@@ -61,6 +63,7 @@ const val DATABASE_NAME = "pluvia.db"
         GOGGame::class,
         EpicGame::class,
         AmazonGame::class,
+        XboxGame::class,
         DownloadingAppInfo::class,
         SteamUnlockedBranch::class,
         ModInstall::class,
@@ -69,7 +72,7 @@ const val DATABASE_NAME = "pluvia.db"
         ModPlacementRecipe::class,
         ModOverwriteManifest::class,
     ],
-    version = 29,
+    version = 30,
     // For db migration, visit https://developer.android.com/training/data-storage/room/migrating-db-versions for more information
     exportSchema = true, // It is better to handle db changes carefully, as GN is getting much more users.
     autoMigrations = [
@@ -94,6 +97,7 @@ const val DATABASE_NAME = "pluvia.db"
         AutoMigration(from = 22, to = 23), // Added local library play history table
         AutoMigration(from = 25, to = 26), // Added GOG hidden column
         AutoMigration(from = 27, to = 28), // Added is_vr_only, is_vr_supported to steam_app
+        AutoMigration(from = 29, to = 30), // Added xbox_games table
     ]
 )
 @TypeConverters(
@@ -129,6 +133,8 @@ abstract class PluviaDatabase : RoomDatabase() {
     abstract fun epicGameDao(): EpicGameDao
 
     abstract fun amazonGameDao(): AmazonGameDao
+
+    abstract fun xboxGameDao(): XboxGameDao
 
     abstract fun downloadingAppInfoDao(): DownloadingAppInfoDao
 

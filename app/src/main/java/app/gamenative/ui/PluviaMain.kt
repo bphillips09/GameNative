@@ -247,6 +247,11 @@ private fun resolveGameAppId(context: Context, appId: String): GameResolutionRes
         GameSource.CUSTOM_GAME -> {
             CustomGameScanner.isGameInstalled(gameId)
         }
+
+        GameSource.XBOX -> {
+            app.gamenative.service.xbox.XboxService.init(context)
+            app.gamenative.service.xbox.XboxService.gameByAppId(gameId)?.isInstalled == true
+        }
     }
 
     if (!isInstalled) {
@@ -2402,6 +2407,10 @@ fun preLaunchApp(
                 GameSource.EPIC -> EpicService.getLaunchExecutable(appId)
                 GameSource.CUSTOM_GAME -> CustomGameScanner.getLaunchExecutable(container)
                 GameSource.AMAZON -> AmazonService.getLaunchExecutable(appId)
+                // The package manifest names the executable; the backend decrypts it at launch.
+                GameSource.XBOX -> app.gamenative.service.xbox.XboxService
+                    .gameByAppId(ContainerUtils.extractGameIdFromContainerId(appId))
+                    ?.takeIf { it.isInstalled }?.let { it.executable ?: "xbox:auto" } ?: ""
             }
             if (effectiveExe.isBlank()) {
                 Timber.tag("preLaunchApp").w("Cannot launch $appId: no executable found (game source: $gameSource)")
@@ -2797,6 +2806,15 @@ fun preLaunchApp(
         val isAmazonGame = gameSource == GameSource.AMAZON
         if (isAmazonGame) {
             Timber.tag("preLaunchApp").i("Amazon Game detected for $appId — skipping cloud sync and launching container")
+            setLoadingDialogVisible(false)
+            onSuccess(context, appId)
+            return@launch
+        }
+
+        // For Xbox games, skip cloud sync (Xbox cloud saves are not supported yet); the
+        // backend prepares the launch view once the container starts
+        if (gameSource == GameSource.XBOX) {
+            Timber.tag("preLaunchApp").i("Xbox game detected for $appId — skipping cloud sync and launching container")
             setLoadingDialogVisible(false)
             onSuccess(context, appId)
             return@launch

@@ -5,11 +5,13 @@ import app.gamenative.service.SteamService
 import app.gamenative.service.amazon.AmazonService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
+import app.gamenative.service.xbox.XboxService
 
 object PlatformAuthUtils {
     fun isSignedInToAnyPlatform(context: Context): Boolean =
         SteamService.isLoggedIn ||
         GOGService.hasStoredCredentials(context) ||
         EpicService.hasStoredCredentials(context) ||
-        AmazonService.hasStoredCredentials(context)
+        AmazonService.hasStoredCredentials(context) ||
+        XboxService.hasStoredCredentials(context)
 }

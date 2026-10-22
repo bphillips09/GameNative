@@ -47,6 +47,7 @@ import app.gamenative.data.GameSource
 import app.gamenative.data.LibraryItem
 import app.gamenative.service.DownloadService
 import app.gamenative.service.amazon.AmazonService
+import app.gamenative.service.xbox.XboxService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.enums.AppFilter
@@ -108,7 +109,13 @@ private fun calculateInstalledCount(context: android.content.Context, state: Lib
         0
     }
 
-    return steamCount + customGameCount + gogCount + epicCount + amazonCount
+    val xboxCount = if (state.showXboxInLibrary && XboxService.hasStoredCredentials(context)) {
+        PrefManager.xboxInstalledGamesCount
+    } else {
+        0
+    }
+
+    return steamCount + customGameCount + gogCount + epicCount + amazonCount + xboxCount
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,6 +143,7 @@ internal fun LibraryListPane(
         state.showGOGInLibrary,
         state.showEpicInLibrary,
         state.showAmazonInLibrary,
+        state.showXboxInLibrary,
         state.totalAppsInFilter,
     ) {
         calculateInstalledCount(context, state)
@@ -220,13 +228,14 @@ internal fun LibraryListPane(
                 }
             }
 
-            val totalSkeletonCount = remember(state.showSteamInLibrary, state.showCustomGamesInLibrary, state.showGOGInLibrary, state.showEpicInLibrary, state.showAmazonInLibrary) {
+            val totalSkeletonCount = remember(state.showSteamInLibrary, state.showCustomGamesInLibrary, state.showGOGInLibrary, state.showEpicInLibrary, state.showAmazonInLibrary, state.showXboxInLibrary) {
                 val customCount = if (state.showCustomGamesInLibrary) PrefManager.customGamesCount else 0
                 val steamCount = if (state.showSteamInLibrary) PrefManager.steamGamesCount else 0
                 val gogInstalledCount = if (state.showGOGInLibrary && GOGService.hasStoredCredentials(context)) PrefManager.gogInstalledGamesCount else 0
                 val epicInstalledCount = if (state.showEpicInLibrary && EpicService.hasStoredCredentials(context)) PrefManager.epicInstalledGamesCount else 0
                 val amazonInstalledCount = if (state.showAmazonInLibrary && AmazonService.hasStoredCredentials(context)) PrefManager.amazonInstalledGamesCount else 0
-                val total = customCount + steamCount + gogInstalledCount + epicInstalledCount + amazonInstalledCount
+                val xboxInstalledCount = if (state.showXboxInLibrary && XboxService.hasStoredCredentials(context)) PrefManager.xboxInstalledGamesCount else 0
+                val total = customCount + steamCount + gogInstalledCount + epicInstalledCount + amazonInstalledCount + xboxInstalledCount
                 Timber.tag("LibraryListPane").d("Skeleton calculation - Custom: $customCount, Steam: $steamCount, GOG installed: $gogInstalledCount, Epic installed: $epicInstalledCount, Amazon installed: $amazonInstalledCount, Total: $total")
                 if (total == 0) 6 else minOf(total, 20)
             }

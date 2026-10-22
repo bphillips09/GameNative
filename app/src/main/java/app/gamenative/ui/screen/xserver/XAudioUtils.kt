@@ -39,6 +39,8 @@ object XAudioUtils {
                 }
                 GameSource.AMAZON -> AmazonService.getInstallPath(appId)
                 GameSource.CUSTOM_GAME -> CustomGameScanner.getFolderPathFromAppId(appId)
+                GameSource.XBOX -> app.gamenative.service.xbox.XboxService
+                    .gameByAppId(ContainerUtils.extractGameIdFromContainerId(appId))?.installPath
             }
         } catch (e: Exception) {
             Timber.tag("XAudioUtils")

@@ -17,7 +17,9 @@ public final class EnvVarRedaction {
         "SteamUser",
         "SteamAppUser",
         "STEAMID",
-        "AMAZON_GAMES_FUEL_ENTITLEMENT_ID"
+        "AMAZON_GAMES_FUEL_ENTITLEMENT_ID",
+        "XODUS_XSTS_PLAYFAB",
+        "XODUS_BRIDGE_KEY"
     ));
 
     private EnvVarRedaction() {}

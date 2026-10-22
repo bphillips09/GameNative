@@ -132,6 +132,7 @@
     <string name="tab_gog">GOG</string>
     <string name="tab_epic">Epic</string>
     <string name="tab_amazon">Amazon</string>
+    <string name="tab_xbox">Xbox</string>
     <string name="tab_installed">Installed</string>
     <string name="tab_local">Custom</string>
     <string name="library_tab_with_count">%1$s (%2$d)</string>
@@ -1797,6 +1798,7 @@
     <string name="library_source_not_logged_in_gog">Sign in to GOG to see your library</string>
     <string name="library_source_not_logged_in_epic">Sign in to Epic to see your library</string>
     <string name="library_source_not_logged_in_amazon">Sign in to Amazon to see your library</string>
+    <string name="library_source_not_logged_in_xbox">Sign in to Xbox to see your library</string>
     <string name="library_source_no_custom_games">No custom games added yet</string>
     <string name="library_layout_title">Layout</string>
     <string name="library_options">Options</string>
@@ -2009,6 +2011,18 @@
     <!-- Amazon Games Integration -->
     <string name="amazon_integration_title">Amazon Games Integration (Alpha)</string>
     <string name="amazon_settings_login_title">Sign in to Amazon Games</string>
+    <string name="xbox_settings_login_title">Sign in to Xbox</string>
+    <string name="xbox_login_success_title">Signed in to Xbox</string>
+    <string name="xbox_settings_logout_title">Sign out of Xbox</string>
+    <string name="xbox_logout_success">Signed out of Xbox</string>
+    <string name="xbox_logout_failed">Failed to sign out of Xbox: %s</string>
+    <string name="xbox_download_complete">Download completed: %s</string>
+    <string name="xbox_download_failed">Xbox download stopped: %s</string>
+    <string name="xbox_install_title">Install %1$s</string>
+    <string name="xbox_install_choose_package">This game has more than one PC package. Choose which one to install.</string>
+    <string name="xbox_install_available_space">Available space: %1$s</string>
+    <string name="xbox_install_unavailable">This game has no PC package that can be installed.</string>
+    <string name="xbox_install_start_failed">Could not start the install: %1$s</string>
     <string name="amazon_settings_login_subtitle">Sign in to your Amazon Games account</string>
     <string name="amazon_login_success_title">Login Successful</string>
     <string name="amazon_login_cancel">Cancel</string>

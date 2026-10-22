@@ -94,6 +94,10 @@ class DatabaseModule {
 
     @Provides
     @Singleton
+    fun provideXboxGameDao(db: PluviaDatabase) = db.xboxGameDao()
+
+    @Provides
+    @Singleton
     fun provideDownloadingAppInfoDao(db: PluviaDatabase): DownloadingAppInfoDao = db.downloadingAppInfoDao()
 
     @Provides

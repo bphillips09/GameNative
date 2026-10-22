@@ -177,6 +177,7 @@ fun GameSourceIcon(
             GameSource.GOG -> Icon(painter = painterResource(R.drawable.ic_gog), contentDescription = "Gog", modifier = Modifier.size(iconSize.dp).alpha(0.7f))
             GameSource.EPIC -> Icon(painter = painterResource(R.drawable.ic_epic), contentDescription = "Epic", modifier = Modifier.size(iconSize.dp).alpha(0.7f))
             GameSource.AMAZON -> Icon(imageVector = Icons.Filled.Amazon, contentDescription = "Amazon", modifier = Modifier.size(iconSize.dp).alpha(0.7f))
+            GameSource.XBOX -> Icon(painter = painterResource(R.drawable.ic_input_xbox_guide), contentDescription = "Xbox", modifier = Modifier.size(iconSize.dp).alpha(0.7f))
         }
     }
 }

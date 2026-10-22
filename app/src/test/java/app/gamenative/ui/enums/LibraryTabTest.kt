@@ -3,6 +3,8 @@ package app.gamenative.ui.enums
 import app.gamenative.ui.enums.LibraryTab.Companion.next
 import app.gamenative.ui.enums.LibraryTab.Companion.previous
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class LibraryTabTest {
@@ -100,9 +102,21 @@ class LibraryTabTest {
     }
 
     @Test
+    fun visibleEntries_hidesXboxWithoutTheBackend() {
+        try {
+            LibraryTab.xboxSupported = false
+            assertFalse(LibraryTab.XBOX in LibraryTab.visibleEntries)
+            LibraryTab.xboxSupported = true
+            assertTrue(LibraryTab.XBOX in LibraryTab.visibleEntries)
+        } finally {
+            LibraryTab.xboxSupported = true
+        }
+    }
+
+    @Test
     fun configurableEntries_containsRecommendedAndStoreTabs() {
         assertEquals(
-            listOf(LibraryTab.RECOMMENDED, LibraryTab.STEAM, LibraryTab.GOG, LibraryTab.EPIC, LibraryTab.AMAZON),
+            listOf(LibraryTab.RECOMMENDED, LibraryTab.STEAM, LibraryTab.GOG, LibraryTab.EPIC, LibraryTab.AMAZON, LibraryTab.XBOX),
             LibraryTab.configurableEntries,
         )
     }

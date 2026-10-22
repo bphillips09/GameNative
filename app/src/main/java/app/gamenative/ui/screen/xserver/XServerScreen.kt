@@ -2412,6 +2412,22 @@ fun XServerScreen(
                             RedistInstallerExtractor.clearCache()
                             RedistComponents.applyForLaunch(container, appId)
 
+                            // Xbox: decrypt the executable before the DX wrapper DLLs are set up, so a
+                            // D3D12 game's container can switch to VKD3D for this launch already.
+                            if (!bootToContainer && !testGraphics &&
+                                ContainerUtils.extractGameSourceFromContainerId(appId) == GameSource.XBOX
+                            ) {
+                                runCatching {
+                                    app.gamenative.service.xbox.XboxService.init(context)
+                                    val plan = app.gamenative.service.xbox.XboxService.prepareLaunchEarly(
+                                        ContainerUtils.extractGameIdFromContainerId(appId),
+                                        container,
+                                    )
+                                    app.gamenative.service.xbox.XboxService.applyGraphicsDefaults(container, plan, PrefManager.dxWrapper)
+                                        ?.let { wrapper -> xServerState.value = xServerState.value.copy(dxwrapper = wrapper) }
+                                }.onFailure { Timber.tag("XServerScreen").w(it, "Xbox launch preparation failed; retrying at launch") }
+                            }
+
                             runBlocking {
                                 setupWineSystemFiles(
                                     context,
@@ -4955,6 +4971,32 @@ private fun getWineStartCommand(
         Timber.tag("XServerScreen").i("Epic launch command: $redactedCommand")
 
         return launchCommand
+    } else if (gameSource == GameSource.XBOX) {
+        // Xbox (Microsoft Store PC) games: the Xodus backend fetches the license and
+        // decrypts the executables into a private launch view mapped to A:, and the
+        // account service is started for the in-prefix xgameruntime.dll.
+        Timber.tag("XServerScreen").i("Launching Xbox game: $gameId")
+        val plan = try {
+            app.gamenative.service.xbox.XboxService.init(context)
+            // Normally prepared before the DLL setup (see the wrapper choice); otherwise now.
+            app.gamenative.service.xbox.XboxService.takePreparedLaunch(gameId)
+                ?: app.gamenative.service.xbox.XboxService.prepareLaunch(gameId, container)
+        } catch (e: Exception) {
+            Timber.tag("XServerScreen").e(e, "Cannot launch Xbox game $gameId")
+            return "\"explorer.exe\""
+        }
+        plan.applyTo(envVars)
+        // The exit watch matches the game's window against executablePath, as for the other
+        // stores. Store the path inside the view (A:\xodus-view-<random>\Bin\Game.exe ->
+        // Bin\Game.exe), which stays the same across launches.
+        val relativeExecutable = plan.windowsExecutable.substringAfter(":\\").substringAfter('\\')
+        if (container.executablePath != relativeExecutable) {
+            container.executablePath = relativeExecutable
+            container.saveData()
+        }
+        guestProgramLauncherComponent.workingDir = plan.workingDirectory
+        Timber.tag("XServerScreen").i("Xbox launch command: \"${plan.windowsExecutable}\"")
+        return "winhandler.exe \"${plan.windowsExecutable}\""
     } else if (gameSource == GameSource.AMAZON) {
         // For Amazon games, convert appId (integer) to productId (Amazon UUID string)
         val appIdInt = runCatching { ContainerUtils.extractGameIdFromContainerId(appId) }.getOrNull()
@@ -5369,6 +5411,7 @@ private fun exit(
     PluviaApp.shutdownEnvironment()
     EaLaunchSupport.stop()
     GogGalaxyService.stop(blocking = false)
+    app.gamenative.service.xbox.XboxService.finishLaunch()
 
     // Bionic-Steam mode brought up libsteamclient.so inside this Android process
     // (see BionicProgramLauncherComponent.bootstrapNativeSteamClient). Tear it

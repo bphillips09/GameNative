@@ -795,6 +795,21 @@ object ContainerUtils {
                 }
             }
 
+            GameSource.XBOX -> {
+                val viewRoot = xboxLaunchViewRoot(appId)
+                if (viewRoot != null) {
+                    val drive: Char = if (defaultDrives.contains("A:")) {
+                        Container.getNextAvailableDriveLetter(defaultDrives)
+                    } else {
+                        'A'
+                    }
+                    "$defaultDrives$drive:$viewRoot"
+                } else {
+                    Timber.w("Could not find Xbox game for: $appId, using default drives")
+                    defaultDrives
+                }
+            }
+
             GameSource.AMAZON -> {
                 // For Amazon games, map the specific game directory to A: drive
                 val appIdInt = runCatching { extractGameIdFromContainerId(appId) }.getOrNull()
@@ -1122,6 +1137,9 @@ object ContainerUtils {
                 val appIdInt = runCatching { extractGameIdFromContainerId(appId) }.getOrNull()
                 if (appIdInt != null) AmazonService.getInstallPathByAppId(appIdInt) else null
             }
+
+            // A: is the private launch-view root; the decrypted view is created in it at launch.
+            GameSource.XBOX -> xboxLaunchViewRoot(appId)
         }
 
         val resolvedGameFolderPath = if (gameSource == GameSource.CUSTOM_GAME) {
@@ -1302,6 +1320,7 @@ object ContainerUtils {
             containerId.startsWith("GOG_") -> GameSource.GOG
             containerId.startsWith("EPIC_") -> GameSource.EPIC
             containerId.startsWith("AMAZON_") -> GameSource.AMAZON
+            containerId.startsWith("XBOX_") -> GameSource.XBOX
             // Add other platforms here..
             else -> GameSource.STEAM // default fallback
         }
@@ -1320,6 +1339,8 @@ object ContainerUtils {
         GameSource.AMAZON,
         GameSource.CUSTOM_GAME,
         -> true
+        // Known configs are keyed by Steam/GOG/Epic/Amazon IDs; Xbox titles have none yet.
+        GameSource.XBOX -> false
     }
 
     /**
@@ -1339,7 +1360,15 @@ object ContainerUtils {
                 CustomGameScanner.getFolderPathFromAppId(customAppId)
                     ?.let { File(it).name }
             }
+            GameSource.XBOX -> app.gamenative.service.xbox.XboxService.gameByAppId(gameId)?.title
         } ?: "Unknown"
+    }
+
+    /** Host directory mapped to A: for an Xbox game (its private launch-view root). */
+    fun xboxLaunchViewRoot(appId: String): String? {
+        val gameId = runCatching { extractGameIdFromContainerId(appId) }.getOrNull() ?: return null
+        val game = app.gamenative.service.xbox.XboxService.gameByAppId(gameId) ?: return null
+        return app.gamenative.service.xbox.XboxService.paths.viewRoot(game.productId).apply { mkdirs() }.absolutePath
     }
 
     /**

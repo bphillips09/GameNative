@@ -173,6 +173,12 @@
             android:exported="false"
             android:theme="@style/Theme.Pluvia" />
 
+        <!-- Xbox OAuth (in-app WebView; the Xodus backend drives the Microsoft sign-in pages) -->
+        <activity
+            android:name=".ui.screen.auth.XboxOAuthActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Pluvia" />
+
         <!-- Amazon OAuth (in-app WebView; PKCE flow for Amazon Games auth) -->
         <activity
             android:name=".ui.screen.auth.AmazonOAuthActivity"

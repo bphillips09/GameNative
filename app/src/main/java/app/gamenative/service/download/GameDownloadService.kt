@@ -30,6 +30,7 @@ import android.content.Context
 import android.content.Intent
 import app.gamenative.data.GameSource
 import app.gamenative.service.amazon.AmazonService
+import app.gamenative.service.xbox.XboxService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import kotlinx.coroutines.Dispatchers
@@ -1088,6 +1089,11 @@ object GameDownloadService {
                 )
                 // Do Nothing for Custom Game
                 GameSource.CUSTOM_GAME -> {}
+                GameSource.XBOX -> XboxService.downloadGame(
+                    context = context,
+                    productId = nextEntry.gameId,
+                    installPath = nextEntry.installPath,
+                )
             }
         }
     }

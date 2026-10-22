@@ -5,6 +5,7 @@ import app.gamenative.R
 import app.gamenative.service.amazon.AmazonService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
+import app.gamenative.service.xbox.XboxService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -146,6 +147,32 @@ object PlatformAuthUiHelpers {
                         R.string.amazon_logout_failed,
                         e.message ?: "Unknown",
                     )
+                    callbacks.onError(message)
+                    SnackbarManager.show(message)
+                }
+            }
+        }
+    }
+
+    fun logoutXbox(
+        context: Context,
+        scope: CoroutineScope,
+        callbacks: PlatformLogoutCallbacks = PlatformLogoutCallbacks(),
+    ) {
+        callbacks.onLoadingChange(true)
+        scope.launch {
+            Timber.d("[PlatformAuthUiHelpers][Xbox] Starting logout...")
+            val result = XboxService.logout(context)
+            withContext(Dispatchers.Main) {
+                callbacks.onLoadingChange(false)
+                if (result.isSuccess) {
+                    Timber.i("[PlatformAuthUiHelpers][Xbox] Logout successful")
+                    callbacks.onSuccess()
+                    SnackbarManager.show(context.getString(R.string.xbox_logout_success))
+                } else {
+                    val error = result.exceptionOrNull()
+                    Timber.e(error, "[PlatformAuthUiHelpers][Xbox] Logout failed")
+                    val message = context.getString(R.string.xbox_logout_failed, error?.message ?: "Unknown")
                     callbacks.onError(message)
                     SnackbarManager.show(message)
                 }

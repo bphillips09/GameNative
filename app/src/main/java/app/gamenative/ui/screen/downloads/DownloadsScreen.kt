@@ -1049,6 +1049,7 @@ private fun sourceLabel(gameSource: GameSource): String = when (gameSource) {
     GameSource.EPIC -> stringResource(R.string.tab_epic)
     GameSource.AMAZON -> stringResource(R.string.tab_amazon)
     GameSource.CUSTOM_GAME -> stringResource(R.string.library_source_custom)
+    GameSource.XBOX -> stringResource(R.string.tab_xbox)
 }
 
 @Composable
@@ -1068,6 +1069,7 @@ private fun sourceContainerColor(gameSource: GameSource): Color = when (gameSour
     GameSource.EPIC -> MaterialTheme.colorScheme.secondaryContainer
     GameSource.AMAZON -> MaterialTheme.colorScheme.surfaceContainerHighest
     GameSource.CUSTOM_GAME -> MaterialTheme.colorScheme.surfaceVariant
+    GameSource.XBOX -> MaterialTheme.colorScheme.surfaceContainerHighest
 }
 
 @Composable
@@ -1077,6 +1079,7 @@ private fun sourceContentColor(gameSource: GameSource): Color = when (gameSource
     GameSource.EPIC -> MaterialTheme.colorScheme.onSecondaryContainer
     GameSource.AMAZON -> MaterialTheme.colorScheme.onSurface
     GameSource.CUSTOM_GAME -> MaterialTheme.colorScheme.onSurfaceVariant
+    GameSource.XBOX -> MaterialTheme.colorScheme.onSurface
 }
 
 @Composable

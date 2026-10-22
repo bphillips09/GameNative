@@ -14,6 +14,7 @@ enum class LibraryTab(
     val showGoG: Boolean,
     val showEpic: Boolean,
     val showAmazon: Boolean,
+    val showXbox: Boolean = false,
     val installedOnly: Boolean,
     val icon: ImageVector? = null,
 ) {
@@ -34,6 +35,7 @@ enum class LibraryTab(
         showGoG = true,
         showEpic = true,
         showAmazon = true,
+        showXbox = true,
         installedOnly = false,
     ),
     FAVORITES(
@@ -43,6 +45,7 @@ enum class LibraryTab(
         showGoG = true,
         showEpic = true,
         showAmazon = true,
+        showXbox = true,
         installedOnly = false,
         icon = Icons.Rounded.Star,
     ),
@@ -82,6 +85,16 @@ enum class LibraryTab(
         showAmazon = true,
         installedOnly = false,
     ),
+    XBOX(
+        labelResId = R.string.tab_xbox,
+        showCustom = false,
+        showSteam = false,
+        showGoG = false,
+        showEpic = false,
+        showAmazon = false,
+        showXbox = true,
+        installedOnly = false,
+    ),
     LOCAL(
         labelResId = R.string.tab_local,
         showCustom = true,
@@ -94,14 +107,21 @@ enum class LibraryTab(
     ;
 
     companion object {
-        val configurableEntries = listOf(RECOMMENDED, STEAM, GOG, EPIC, AMAZON)
+        val configurableEntries = listOf(RECOMMENDED, STEAM, GOG, EPIC, AMAZON, XBOX)
+
+        /**
+         * Whether the device has the Xbox backend (arm64 only); set at start-up from
+         * XboxService.isSupported. Without it the Xbox tab is not shown.
+         */
+        @Volatile
+        var xboxSupported: Boolean = true
 
         /**
          * Tabs shown in the UI. Custom (LOCAL) games work on all flavors: legacy maps folders
          * in place via all-files access, modern imports them into app-owned storage.
          */
         val visibleEntries: List<LibraryTab>
-            get() = entries.toList()
+            get() = entries.filter { it != XBOX || xboxSupported }
 
         fun normalizeVisibleTabs(
             serialized: String,

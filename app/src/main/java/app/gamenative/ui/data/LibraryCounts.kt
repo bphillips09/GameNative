@@ -17,6 +17,7 @@ object LibraryCounts {
         epicGames: Int,
         epicInstalledGames: Int,
         amazonInstalledGames: Int,
+        xboxInstalledGames: Int,
     ) {
         PrefManager.customGamesCount = customGames
         PrefManager.steamGamesCount = steamGames
@@ -25,5 +26,6 @@ object LibraryCounts {
         PrefManager.epicGamesCount = epicGames
         PrefManager.epicInstalledGamesCount = epicInstalledGames
         PrefManager.amazonInstalledGamesCount = amazonInstalledGames
+        PrefManager.xboxInstalledGamesCount = xboxInstalledGames
     }
 }

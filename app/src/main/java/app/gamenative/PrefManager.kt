@@ -1348,6 +1348,21 @@ object PrefManager {
             setPref(SHOW_AMAZON_IN_LIBRARY, value)
         }
 
+    /** Signed-in Microsoft account, cached so sign-in checks never start the Xodus backend. */
+    private val XBOX_ACCOUNT_NAME = stringPreferencesKey("xbox_account_name")
+    var xboxAccountName: String
+        get() = getPref(XBOX_ACCOUNT_NAME, "")
+        set(value) {
+            setPref(XBOX_ACCOUNT_NAME, value)
+        }
+
+    private val SHOW_XBOX_IN_LIBRARY = booleanPreferencesKey("show_xbox_in_library")
+    var showXboxInLibrary: Boolean
+        get() = getPref(SHOW_XBOX_IN_LIBRARY, true)
+        set(value) {
+            setPref(SHOW_XBOX_IN_LIBRARY, value)
+        }
+
     // Game counts for skeleton loaders
     private val CUSTOM_GAMES_COUNT = intPreferencesKey("custom_games_count")
     var customGamesCount: Int
@@ -1414,6 +1429,13 @@ object PrefManager {
         get() = getPref(AMAZON_INSTALLED_GAMES_COUNT, 0)
         set(value) {
             setPref(AMAZON_INSTALLED_GAMES_COUNT, value)
+        }
+
+    private val XBOX_INSTALLED_GAMES_COUNT = intPreferencesKey("xbox_installed_games_count")
+    var xboxInstalledGamesCount: Int
+        get() = getPref(XBOX_INSTALLED_GAMES_COUNT, 0)
+        set(value) {
+            setPref(XBOX_INSTALLED_GAMES_COUNT, value)
         }
 
     // Cached recommendation JSON (single game) and timestamp
@@ -1628,6 +1650,7 @@ object PrefManager {
         GameSource.GOG -> frontendSyncDirGog
         GameSource.AMAZON -> frontendSyncDirAmazon
         GameSource.CUSTOM_GAME -> frontendSyncDirCustom
+        GameSource.XBOX -> ""
     }
 
     /** Persists [path] as the export directory for [source]. Pass an empty string to clear. */
@@ -1638,6 +1661,7 @@ object PrefManager {
             GameSource.GOG -> frontendSyncDirGog = path
             GameSource.AMAZON -> frontendSyncDirAmazon = path
             GameSource.CUSTOM_GAME -> frontendSyncDirCustom = path
+            GameSource.XBOX -> Unit
         }
     }
 

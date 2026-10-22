@@ -65,6 +65,7 @@ object GameFeedbackUtils {
                     val appInfo = SteamService.getAppInfoOf(gameId)
                     appInfo?.name ?: ""
                 }
+                GameSource.XBOX -> app.gamenative.service.xbox.XboxService.gameByAppId(gameId)?.title ?: ""
             }
 
             if (gameName.isEmpty()) {

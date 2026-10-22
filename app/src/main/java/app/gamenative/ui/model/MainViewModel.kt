@@ -674,6 +674,10 @@ class MainViewModel @Inject constructor(
                         }
                         heroFile?.let { android.net.Uri.fromFile(it).toString() } ?: ""
                     }
+                    GameSource.XBOX -> {
+                        val game = app.gamenative.service.xbox.XboxService.gameByAppId(gameId)
+                        game?.hero ?: game?.boxArt ?: ""
+                    }
                 }
             }
             setBootingSplashHeroImageUrl(heroUrl)

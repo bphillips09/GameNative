@@ -31,15 +31,18 @@ import app.gamenative.events.AndroidEvent
 import app.gamenative.data.GOGGame
 import app.gamenative.data.EpicGame
 import app.gamenative.data.AmazonGame
+import app.gamenative.data.XboxGame
 import app.gamenative.db.dao.LibraryPlayHistoryDao
 import app.gamenative.db.dao.SteamAppDao
 import app.gamenative.db.dao.GOGGameDao
 import app.gamenative.db.dao.EpicGameDao
 import app.gamenative.db.dao.AmazonGameDao
+import app.gamenative.db.dao.XboxGameDao
 import app.gamenative.service.DownloadService
 import app.gamenative.service.SteamService
 import app.gamenative.service.amazon.AmazonArtwork
 import app.gamenative.service.amazon.AmazonService
+import app.gamenative.service.xbox.XboxService
 import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import app.gamenative.steam.SteamCollectionFilter
@@ -100,6 +103,7 @@ class LibraryViewModel @Inject constructor(
     private val gogGameDao: GOGGameDao,
     private val epicGameDao: EpicGameDao,
     private val amazonGameDao: AmazonGameDao,
+    private val xboxGameDao: XboxGameDao,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -168,6 +172,7 @@ class LibraryViewModel @Inject constructor(
     private var gogGameList: List<GOGGame> = emptyList()
     private var epicGameList: List<EpicGame> = emptyList()
     private var amazonGameList: List<AmazonGame> = emptyList()
+    private var xboxGameList: List<XboxGame> = emptyList()
     private var playHistoryByAppId: Map<String, Long> = emptyMap()
 
     @Volatile private var steamCollections: List<SteamCollection>? = null
@@ -314,6 +319,17 @@ class LibraryViewModel @Inject constructor(
                 Timber.tag("LibraryViewModel").d("Collecting ${games.size} Amazon games")
                 val hasChanges = amazonGameList.size != games.size || amazonGameList != games
                 amazonGameList = games
+                if (hasChanges) {
+                    onFilterApps(paginationCurrentPage)
+                }
+            }
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            xboxGameDao.getAll().collect { games ->
+                Timber.tag("LibraryViewModel").d("Collecting ${games.size} Xbox games")
+                val hasChanges = xboxGameList != games
+                xboxGameList = games
                 if (hasChanges) {
                     onFilterApps(paginationCurrentPage)
                 }
@@ -491,6 +507,11 @@ class LibraryViewModel @Inject constructor(
                 PrefManager.showAmazonInLibrary = newValue
                 _state.update { it.copy(showAmazonInLibrary = newValue) }
             }
+            GameSource.XBOX -> {
+                val newValue = !current.showXboxInLibrary
+                PrefManager.showXboxInLibrary = newValue
+                _state.update { it.copy(showXboxInLibrary = newValue) }
+            }
         }
         onFilterApps(paginationCurrentPage)
     }
@@ -652,6 +673,10 @@ class LibraryViewModel @Inject constructor(
                 if (AmazonService.hasStoredCredentials(context)) {
                     Timber.tag("LibraryViewModel").i("Triggering Amazon library refresh")
                     AmazonService.triggerLibrarySync(context)
+                }
+                if (XboxService.hasStoredCredentials(context)) {
+                    Timber.tag("LibraryViewModel").i("Triggering Xbox library refresh")
+                    XboxService.triggerLibrarySync(context)
                 }
             } catch (e: Exception) {
                 Timber.tag("LibraryViewModel").e(e, "Failed to refresh owned games from server")
@@ -1118,10 +1143,57 @@ class LibraryViewModel @Inject constructor(
                     )
                 }
 
+            // Xbox games: those the account can play, plus installed ones whose license lapsed
+            val filteredXboxGames = xboxGameList
+                .asSequence()
+                .filter { game -> game.access != null || game.isInstalled }
+                .filter { game ->
+                    if (currentState.searchQuery.isNotEmpty()) {
+                        matches(game.title, currentState.searchQuery)
+                    } else {
+                        true
+                    }
+                }
+                .filter { game ->
+                    val installedOnly = currentState.currentTab.installedOnly ||
+                        currentState.appInfoSortType.contains(AppFilter.INSTALLED)
+                    if (installedOnly) {
+                        game.isInstalled
+                    } else {
+                        true
+                    }
+                }
+                .toList()
+
+            val xboxEntries = filteredXboxGames
+                .filter { passesCompatibleFilter(it.title) }
+                .filter { passesStatsFilters(currentState, GameSource.XBOX, it.title) }
+                .map { game ->
+                    val boxArt = game.boxArt.orEmpty()
+                    val hero = game.hero.orEmpty()
+                    val appId = "${GameSource.XBOX.name}_${game.appId}"
+                    LibraryEntry(
+                        item = LibraryItem(
+                            index = 0,
+                            appId = appId,
+                            name = game.title,
+                            iconHash = boxArt,
+                            capsuleImageUrl = boxArt,
+                            headerImageUrl = hero.ifEmpty { boxArt },
+                            heroImageUrl = hero.ifEmpty { boxArt },
+                            isShared = false,
+                            gameSource = GameSource.XBOX,
+                        ),
+                        isInstalled = game.isInstalled,
+                        lastPlayed = lastPlayedFor(appId),
+                    )
+                }
+
             // Calculate installed counts
             val gogInstalledCount = filteredGOGGames.count { it.isInstalled }
             val epicInstalledCount = filteredEpicGames.count { it.isInstalled }
             val amazonInstalledCount = filteredAmazonGames.count { it.isInstalled }
+            val xboxInstalledCount = filteredXboxGames.count { it.isInstalled }
             // Save game counts for skeleton loaders (only when not searching, to get accurate counts)
             // This needs to happen before filtering by source, so we save the total counts
             if (currentState.searchQuery.isEmpty()) {
@@ -1135,6 +1207,7 @@ class LibraryViewModel @Inject constructor(
                     epicGames = filteredEpicGames.size,
                     epicInstalledGames = epicInstalledCount,
                     amazonInstalledGames = amazonInstalledCount,
+                    xboxInstalledGames = xboxInstalledCount,
                 )
                 Timber.tag("LibraryViewModel").d("Saved counts - Custom: ${customGameItems.size}, Steam: ${steamFilteredBeforeCompatibility.size}, GOG: ${filteredGOGGames.size}, GOG installed: $gogInstalledCount, Epic: ${filteredEpicGames.size}, Epic installed: $epicInstalledCount, Amazon installed: $amazonInstalledCount")
             }
@@ -1171,6 +1244,12 @@ class LibraryViewModel @Inject constructor(
             } else {
                 currentTab.showAmazon
             }) && AmazonService.hasStoredCredentials(context)
+
+            val includeXbox = (if (currentTab == app.gamenative.ui.enums.LibraryTab.ALL) {
+                currentState.showXboxInLibrary
+            } else {
+                currentTab.showXbox
+            }) && XboxService.hasStoredCredentials(context)
 
             // Combine both lists and apply sort option
             val sortComparator: Comparator<LibraryEntry> = when (currentState.currentSortOption) {
@@ -1238,6 +1317,7 @@ class LibraryViewModel @Inject constructor(
                 if (includeGOG && !steamListFilterSelected) addAll(gogEntries)
                 if (includeEpic && !steamListFilterSelected) addAll(epicEntries)
                 if (includeAmazon && !steamListFilterSelected) addAll(amazonEntries)
+                if (includeXbox && !steamListFilterSelected) addAll(xboxEntries)
             }.let { entries ->
                 if (currentTab == app.gamenative.ui.enums.LibraryTab.FAVORITES) {
                     FavoritesUtils.filter(entries, favoriteIds) { it.item.appId }
@@ -1332,6 +1412,7 @@ class LibraryViewModel @Inject constructor(
                 if (GOGService.hasStoredCredentials(context)) addAll(gogEntries)
                 if (EpicService.hasStoredCredentials(context)) addAll(epicEntries)
                 if (AmazonService.hasStoredCredentials(context)) addAll(amazonEntries)
+                if (XboxService.hasStoredCredentials(context)) addAll(xboxEntries)
             }.mapTo(mutableSetOf()) { it.item.appId }
             if (generation != filterGeneration.get()) return@launch
             favoriteEligibleAppIds = favoriteEligible
@@ -1349,11 +1430,13 @@ class LibraryViewModel @Inject constructor(
                         (if (currentState.showCustomGamesInLibrary) customEntries.size else 0) +
                         (if (currentState.showGOGInLibrary && GOGService.hasStoredCredentials(context)) gogEntries.size else 0) +
                         (if (currentState.showEpicInLibrary && EpicService.hasStoredCredentials(context)) epicEntries.size else 0) +
-                        (if (currentState.showAmazonInLibrary && AmazonService.hasStoredCredentials(context)) amazonEntries.size else 0),
+                        (if (currentState.showAmazonInLibrary && AmazonService.hasStoredCredentials(context)) amazonEntries.size else 0) +
+                        (if (currentState.showXboxInLibrary && XboxService.hasStoredCredentials(context)) xboxEntries.size else 0),
                     steamCount = if (currentState.showSteamInLibrary) steamEntries.size else 0,
                     gogCount = if (currentState.showGOGInLibrary && GOGService.hasStoredCredentials(context)) gogEntries.size else 0,
                     epicCount = if (currentState.showEpicInLibrary && EpicService.hasStoredCredentials(context)) epicEntries.size else 0,
                     amazonCount = if (currentState.showAmazonInLibrary && AmazonService.hasStoredCredentials(context)) amazonEntries.size else 0,
+                    xboxCount = if (currentState.showXboxInLibrary && XboxService.hasStoredCredentials(context)) xboxEntries.size else 0,
                     localCount = if (currentState.showCustomGamesInLibrary) customEntries.size else 0,
                     steamCollectionCounts = steamCollectionCounts,
                     curatedListCounts = curatedListCounts,

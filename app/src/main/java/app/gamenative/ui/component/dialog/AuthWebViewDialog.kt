@@ -44,6 +44,8 @@ fun AuthWebViewDialog(
     onUrlChange: ((String) -> Unit)? = null,
     onPageFinished: ((url: String, webView: WebView) -> Unit)? = null,
     customWebViewClient: WebViewClient? = null,
+    // Runs before the first load, e.g. to attach a JavaScript interface that must exist on that page.
+    onWebViewCreated: ((WebView) -> Unit)? = null,
 ) {
     if (isVisible) {
         val defaultTitle = stringResource(R.string.auth_webview_title)
@@ -166,6 +168,8 @@ fun AuthWebViewDialog(
                                         Timber.d("Auth WebView progress: $newProgress%")
                                     }
                                 }
+
+                                onWebViewCreated?.invoke(this)
 
                                 if (webViewState.size() > 0) {
                                     restoreState(webViewState)
