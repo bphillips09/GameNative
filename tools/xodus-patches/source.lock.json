@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "note": "Pins for tools/build-xodus.sh and tools/build-xodus-runtime.sh. The Xodus backend is upstream xodus-gaming/xodus at the commit Xodus Nexus pins, plus the Nexus backend patch set (applied in the order of nexus-backend-source.lock.json), plus GameNative's Android patches in this directory.",
+  "nexus": {
+    "url": "https://github.com/domsvoboda/xodus-nexus.git",
+    "commit": "228dd1bc63aabd3fcfb50607f3fe38b1727e4721",
+    "launcherVersion": "0.3.8"
+  },
+  "xodus": {
+    "url": "https://github.com/xodus-gaming/xodus.git",
+    "commit": "53ea781dcd073e31d7ea68e894134e9c959bff04",
+    "nexusPatchId": "linux-run-v24",
+    "rust": "1.99.0"
+  },
+  "androidPatches": [
+    "0001-android-port.patch"
+  ]
+}

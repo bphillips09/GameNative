@@ -1,0 +1,1222 @@
+From c9b32fbd30f031363cd8883520d2f34eb070ea4e Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Mon, 19 Oct 2026 17:57:48 -0700
+Subject: [PATCH] Android port: file keyring, synthetic SMBIOS identity,
+ explicit TLS roots, launch handoff
+
+---
+ Cargo.lock                                    |  12 +
+ crates/msixvc/Cargo.toml                      |   3 +
+ crates/xodus-cli/Cargo.toml                   |   3 +
+ crates/xodus-cli/src/commands/profile.rs      |   2 +-
+ crates/xodus-cli/src/commands/run.rs          | 198 +++++++++++++++-
+ crates/xodus-cli/src/commands/subscription.rs |   2 +-
+ crates/xodus-cli/src/main.rs                  |  44 +++-
+ crates/xodus-service/Cargo.toml               |   3 +
+ crates/xodus-service/src/main.rs              |   2 +-
+ crates/xodus-service/src/simple_context.rs    |   2 +-
+ crates/xodus-service/src/utils.rs             |   9 +
+ crates/xodus/Cargo.toml                       |  15 +-
+ crates/xodus/src/android_store.rs             | 216 ++++++++++++++++++
+ crates/xodus/src/hardware.rs                  | 164 ++++++++++++-
+ crates/xodus/src/http.rs                      | 151 ++++++++++++
+ crates/xodus/src/lib.rs                       |   6 +
+ crates/xodus/src/secrets.rs                   |  11 +-
+ 17 files changed, 815 insertions(+), 28 deletions(-)
+ create mode 100644 crates/xodus/src/android_store.rs
+ create mode 100644 crates/xodus/src/http.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index d5f9948..9624832 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3903,6 +3903,15 @@ version = "0.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+ 
++[[package]]
++name = "openssl-src"
++version = "300.6.1+3.6.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "46eb8fb9fb3b61ce1c0f8a026c4c1a0714d3a9e138e7fbde78753ce2babc3846"
++dependencies = [
++ "cc",
++]
++
+ [[package]]
+ name = "openssl-sys"
+ version = "0.9.117"
+@@ -3911,6 +3920,7 @@ checksum = "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
+ dependencies = [
+  "cc",
+  "libc",
++ "openssl-src",
+  "pkg-config",
+  "vcpkg",
+ ]
+@@ -7154,6 +7164,7 @@ dependencies = [
+  "num-bigint-dig 0.9.1",
+  "num-integer",
+  "num_enum",
++ "openssl",
+  "prost",
+  "prost-build",
+  "quick-xml 0.42.0",
+@@ -7164,6 +7175,7 @@ dependencies = [
+  "serde_json",
+  "sha2 0.11.0",
+  "smbios-lib",
++ "tempfile",
+  "thiserror 2.0.20",
+  "tokio",
+  "tracing",
+diff --git a/crates/msixvc/Cargo.toml b/crates/msixvc/Cargo.toml
+index 1c726d5..94a355a 100644
+--- a/crates/msixvc/Cargo.toml
++++ b/crates/msixvc/Cargo.toml
+@@ -24,3 +24,6 @@ sha2 = "0.11.0"
+ tokio-util = { version = "0.7.19", features = ["io-util"] }
+ typenum = { version = "1.20.1", features = ["const-generics"] }
+ zerocopy = { version = "0.8.56", features = ["derive"] }
++
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xodus_android)', 'cfg(tokio_unstable)'] }
+diff --git a/crates/xodus-cli/Cargo.toml b/crates/xodus-cli/Cargo.toml
+index 5894ef9..1172ac3 100644
+--- a/crates/xodus-cli/Cargo.toml
++++ b/crates/xodus-cli/Cargo.toml
+@@ -34,3 +34,6 @@ nix = "0.31.3"
+ default = ["native-webview"]
+ native-webview = ["dep:tao", "dep:wry"]
+ tokio_console = ["dep:console-subscriber"]
++
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xodus_android)', 'cfg(tokio_unstable)'] }
+diff --git a/crates/xodus-cli/src/commands/profile.rs b/crates/xodus-cli/src/commands/profile.rs
+index 20b84d2..8005bd6 100644
+--- a/crates/xodus-cli/src/commands/profile.rs
++++ b/crates/xodus-cli/src/commands/profile.rs
+@@ -47,7 +47,7 @@ fn image_data(bytes: &[u8]) -> Option<String> {
+ }
+ 
+ pub(super) async fn xbox_session(tokens: &TokenManager) -> Result<(reqwest::Client, String, String), &'static str> {
+-    let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
++    let client = xodus::http::client_builder().redirect(reqwest::redirect::Policy::none())
+         .timeout(super::session::REQUEST_TIMEOUT).user_agent("xodus-nexus-profile/1").build().map_err(|_| "http-client")?;
+     let (account, device, user) = super::session::prepare(tokens, &client).await.map_err(|stage| {
+         super::session::diagnostic(stage); stage
+diff --git a/crates/xodus-cli/src/commands/run.rs b/crates/xodus-cli/src/commands/run.rs
+index 42f00e9..84f27ee 100644
+--- a/crates/xodus-cli/src/commands/run.rs
++++ b/crates/xodus-cli/src/commands/run.rs
+@@ -9,11 +9,11 @@ use msixvc::layout::PAGE_SIZE;
+ use msixvc::xvd::{SegmentFile, XvdFile};
+ use nix::sys::signal::{Signal, kill};
+ use nix::unistd::Pid;
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ use rustix::fs::{MemfdFlags, memfd_create};
+ use rustix::io::{FdFlags, fcntl_getfd, fcntl_setfd};
+ use tempfile::{Builder, TempDir};
+-#[cfg(not(target_os = "linux"))]
++#[cfg(not(any(target_os = "linux", target_os = "android")))]
+ use tempfile::{tempdir, tempfile, tempfile_in};
+ use tokio::fs::{File, OpenOptions};
+ use tokio::process::Command;
+@@ -37,6 +37,17 @@ async fn playfab_auth_header(client: &reqwest::Client, tokens: &TokenManager) ->
+ }
+ 
+ const LAUNCH_STUB_SUFFIX: &str = ".xodus-launch.exe";
++/// Directory prefix of launch views created inside an explicit view root.
++pub const LAUNCH_VIEW_PREFIX: &str = "xodus-view-";
++/// Line prefix of the launch handoff protocol on stdout.
++pub const HANDOFF_PREFIX: &str = "NEXUS_LAUNCH_V1 ";
++
++/// Launch handoff: instead of spawning Wine, `run` prepares the decrypted
++/// launch view, reports it on stdout and keeps it alive until told to stop.
++/// Used by hosts (GameNative on Android) that start Wine themselves.
++pub struct Handoff {
++    pub view_root: Option<PathBuf>,
++}
+ 
+ fn select_launch_entry<'a>(
+     fds: &[(&'a String, RawFd)],
+@@ -196,11 +207,27 @@ fn create_launch_chain_mirror(
+     source_root: &Path,
+     entry_suffix: &str,
+     fds: &[(&String, RawFd)],
++) -> std::io::Result<(TempDir, PathBuf, usize, u64)> {
++    create_launch_view(source_root, entry_suffix, fds, None, false)
++}
++
++/// Builds a temporary launch view: real directories down to every decrypted
++/// image, symlinks for everything else. With `materialize_all` every encrypted
++/// image (DLLs included) is written out decrypted, so a stock Wine without
++/// Xodus's `WINE_DLL_FILE_MAP` support can load the game. `view_root` places the
++/// view in a private directory (needed where the game itself lives on storage
++/// without symlink support, e.g. Android shared storage).
++fn create_launch_view(
++    source_root: &Path,
++    entry_suffix: &str,
++    fds: &[(&String, RawFd)],
++    view_root: Option<&Path>,
++    materialize_all: bool,
+ ) -> std::io::Result<(TempDir, PathBuf, usize, u64)> {
+     let entry_path = checked_relative_path(entry_suffix)?;
+     let mut decrypted = HashMap::new();
+     for (name, fd) in fds {
+-        if name.to_ascii_lowercase().ends_with(".exe") || checked_relative_path(name)? == entry_path {
++        if materialize_all || name.to_ascii_lowercase().ends_with(".exe") || checked_relative_path(name)? == entry_path {
+             decrypted.insert(checked_relative_path(name)?, *fd);
+         }
+     }
+@@ -222,11 +249,19 @@ fn create_launch_chain_mirror(
+         }
+     }
+     let decrypted_files: HashSet<PathBuf> = decrypted.keys().cloned().collect();
+-    let parent = source_root.parent().unwrap_or_else(|| Path::new("/tmp"));
+-    let mirror = Builder::new()
+-        .prefix(".xodus-chain-")
+-        .tempdir_in(parent)
+-        .or_else(|_| Builder::new().prefix("xodus-chain-").tempdir())?;
++    let mirror = match view_root {
++        Some(root) => {
++            std::fs::create_dir_all(root)?;
++            Builder::new().prefix(LAUNCH_VIEW_PREFIX).tempdir_in(root)?
++        }
++        None => {
++            let parent = source_root.parent().unwrap_or_else(|| Path::new("/tmp"));
++            Builder::new()
++                .prefix(".xodus-chain-")
++                .tempdir_in(parent)
++                .or_else(|_| Builder::new().prefix("xodus-chain-").tempdir())?
++        }
++    };
+     populate_launch_view(
+         source_root,
+         mirror.path(),
+@@ -337,13 +372,13 @@ fn write_launch_stub(stub_path: &Path, fd: RawFd, materialize: bool) -> std::io:
+     Ok(image_len)
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ fn make_temp_file(_folder: &str) -> std::io::Result<std::fs::File> {
+     let fd = memfd_create("xodus", MemfdFlags::CLOEXEC).map_err(std::io::Error::from)?;
+     Ok(std::fs::File::from(fd))
+ }
+ 
+-#[cfg(not(target_os = "linux"))]
++#[cfg(not(any(target_os = "linux", target_os = "android")))]
+ fn make_temp_file(folder: &str) -> std::io::Result<std::fs::File> {
+     if folder.is_empty() {
+         tempfile()
+@@ -440,7 +475,11 @@ pub async fn run(
+     materialize_exe: bool,
+     materialize_chain: bool,
+     market: Option<String>,
++    handoff: Option<Handoff>,
+ ) -> ExitCode {
++    // A handoff host runs its own Wine, which has no file-map support:
++    // every encrypted image must be materialized into the view.
++    let materialize_chain = materialize_chain || handoff.is_some();
+     let mut lfiles: HashMap<String, SegmentFile> = HashMap::new();
+ 
+     let out: &Path = Path::new(&source);
+@@ -552,7 +591,8 @@ pub async fn run(
+     let entry_suffix = entry_name.trim_start_matches('\\');
+ 
+     let (launch_mirror, stub_path, mirror_nt_prefix) = if materialize_chain {
+-        match create_launch_chain_mirror(&out_absolute, entry_suffix, &fds) {
++        let view_root = handoff.as_ref().and_then(|handoff| handoff.view_root.as_deref());
++        match create_launch_view(&out_absolute, entry_suffix, &fds, view_root, handoff.is_some()) {
+             Ok((mirror, path, count, bytes)) => {
+                 eprintln!(
+                     "created a temporary launch view with {} decrypted executables ({} bytes) at {}",
+@@ -619,6 +659,18 @@ pub async fn run(
+         );
+     }
+ 
++    if handoff.is_some() {
++        let playfab = playfab_auth_header(client, tokens).await;
++        if playfab.is_none() {
++            eprintln!("could not authorise a PlayFab token; in-game sign-in may fail");
++        }
++        let code = run_handoff(&stub_path, launch_mirror.as_ref().map(|view| view.path()), playfab).await;
++        let _ = std::fs::remove_file(&stub_path);
++        drop(launch_mirror);
++        cleanup().await;
++        return code;
++    }
++
+     let mut command = Command::new(wine);
+     command
+         .arg(&stub_path)
+@@ -660,6 +712,62 @@ pub async fn run(
+     ExitCode::from(wine_exit_code(status))
+ }
+ 
++fn handoff_ready_frame(stub_path: &Path, view: Option<&Path>, playfab: Option<&str>) -> serde_json::Value {
++    let mut environment = serde_json::Map::new();
++    if let Some(header) = playfab {
++        environment.insert("XODUS_XSTS_PLAYFAB".into(), header.into());
++    }
++    serde_json::json!({
++        "schema": 1,
++        "event": "ready",
++        "executable": stub_path.to_string_lossy(),
++        "workingDirectory": stub_path.parent().map(|dir| dir.to_string_lossy().into_owned()),
++        "view": view.map(|view| view.to_string_lossy().into_owned()),
++        "environment": environment,
++    })
++}
++
++/// Reports the prepared view, then holds it (and the license-derived keys in
++/// this process) until stdin sends `{"command":"stop"}`, stdin closes, or the
++/// process is interrupted. The caller removes the view afterwards.
++async fn run_handoff(stub_path: &Path, view: Option<&Path>, playfab: Option<String>) -> ExitCode {
++    use tokio::io::{AsyncBufReadExt, BufReader};
++    let ready = handoff_ready_frame(stub_path, view, playfab.as_deref());
++    println!("{HANDOFF_PREFIX}{ready}");
++    let mut lines = BufReader::new(tokio::io::stdin()).lines();
++    loop {
++        tokio::select! {
++            line = lines.next_line() => match line {
++                Ok(Some(line)) => {
++                    let stop = serde_json::from_str::<serde_json::Value>(&line)
++                        .is_ok_and(|value| value["command"] == "stop");
++                    if stop { break; }
++                }
++                Ok(None) | Err(_) => break,
++            },
++            _ = tokio::signal::ctrl_c() => break,
++        }
++    }
++    println!("{HANDOFF_PREFIX}{}", serde_json::json!({"schema": 1, "event": "stopped"}));
++    ExitCode::SUCCESS
++}
++
++/// Removes launch views left behind by a handoff process that was killed
++/// before it could clean up (they contain decrypted executables).
++pub fn sweep_stale_views(view_root: &Path) -> std::io::Result<usize> {
++    let mut removed = 0;
++    let Ok(items) = std::fs::read_dir(view_root) else { return Ok(0) };
++    for item in items {
++        let item = item?;
++        let name = item.file_name();
++        if name.to_string_lossy().starts_with(LAUNCH_VIEW_PREFIX) && item.file_type()?.is_dir() {
++            std::fs::remove_dir_all(item.path())?;
++            removed += 1;
++        }
++    }
++    Ok(removed)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -819,4 +927,72 @@ mod tests {
+         symlink(outside.path(), root.path().join("External")).unwrap();
+         assert!(resolve_package_file(root.path(), "external/EXTERNAL.exe").is_err());
+     }
++
++    #[test]
++    fn handoff_view_materializes_encrypted_dlls_in_a_private_root() {
++        let root = tempfile::tempdir().unwrap();
++        let source = root.path().join("game");
++        std::fs::create_dir_all(source.join("Bin")).unwrap();
++        std::fs::write(source.join("Game.exe"), b"encrypted exe").unwrap();
++        std::fs::write(source.join("Bin/Protected.dll"), b"encrypted dll").unwrap();
++        std::fs::write(source.join("Bin/plain.pak"), b"plain").unwrap();
++        let mut exe = tempfile::tempfile().unwrap();
++        let mut dll = tempfile::tempfile().unwrap();
++        exe.write_all(&fake_pe()).unwrap();
++        dll.write_all(&fake_pe()).unwrap();
++        let exe_name = String::from("Game.exe");
++        let dll_name = String::from("Bin\\Protected.dll");
++        let files = [(&exe_name, exe.as_raw_fd()), (&dll_name, dll.as_raw_fd())];
++        let private = root.path().join("private-views");
++
++        // Desktop chain mode keeps DLLs encrypted (served by Wine file maps)...
++        let (desktop, _, desktop_count, _) = create_launch_chain_mirror(&source, &exe_name, &files).unwrap();
++        assert_eq!(desktop_count, 1);
++        // (no decrypted image under Bin, so the whole directory is a symlink to the source)
++        assert!(std::fs::symlink_metadata(desktop.path().join("Bin")).unwrap().file_type().is_symlink());
++
++        // ...the handoff view decrypts every image and lives under the view root.
++        let (view, entry, count, _) =
++            create_launch_view(&source, &exe_name, &files, Some(&private), true).unwrap();
++        assert_eq!(count, 2);
++        assert!(view.path().starts_with(&private));
++        assert!(view.path().file_name().unwrap().to_string_lossy().starts_with(LAUNCH_VIEW_PREFIX));
++        assert_eq!(entry, view.path().join("Game.exe"));
++        let dll_meta = std::fs::symlink_metadata(view.path().join("Bin/Protected.dll")).unwrap();
++        assert!(dll_meta.file_type().is_file());
++        assert_eq!(std::fs::read(view.path().join("Bin/Protected.dll")).unwrap(), fake_pe());
++        assert!(std::fs::symlink_metadata(view.path().join("Bin/plain.pak")).unwrap().file_type().is_symlink());
++        assert_eq!(std::fs::read(source.join("Bin/Protected.dll")).unwrap(), b"encrypted dll");
++    }
++
++    #[test]
++    fn handoff_ready_frame_carries_only_launch_facts() {
++        let frame = handoff_ready_frame(
++            Path::new("/views/xodus-view-1/Bin/Game.exe"),
++            Some(Path::new("/views/xodus-view-1")),
++            Some("XBL3.0 x=1;token"),
++        );
++        assert_eq!(frame["schema"], 1);
++        assert_eq!(frame["event"], "ready");
++        assert_eq!(frame["executable"], "/views/xodus-view-1/Bin/Game.exe");
++        assert_eq!(frame["workingDirectory"], "/views/xodus-view-1/Bin");
++        assert_eq!(frame["view"], "/views/xodus-view-1");
++        assert_eq!(frame["environment"]["XODUS_XSTS_PLAYFAB"], "XBL3.0 x=1;token");
++        let without = handoff_ready_frame(Path::new("/g/Game.exe"), None, None);
++        assert!(without["environment"].as_object().unwrap().is_empty());
++        assert!(without["view"].is_null());
++    }
++
++    #[test]
++    fn sweep_removes_only_stale_launch_views() {
++        let root = tempfile::tempdir().unwrap();
++        std::fs::create_dir_all(root.path().join(format!("{LAUNCH_VIEW_PREFIX}abc/Bin"))).unwrap();
++        std::fs::write(root.path().join(format!("{LAUNCH_VIEW_PREFIX}abc/Bin/Game.exe")), b"decrypted").unwrap();
++        std::fs::create_dir(root.path().join("keep-me")).unwrap();
++        std::fs::write(root.path().join(format!("{LAUNCH_VIEW_PREFIX}file")), b"not a dir").unwrap();
++        assert_eq!(sweep_stale_views(root.path()).unwrap(), 1);
++        assert!(root.path().join("keep-me").exists());
++        assert!(root.path().join(format!("{LAUNCH_VIEW_PREFIX}file")).exists());
++        assert_eq!(sweep_stale_views(&root.path().join("missing")).unwrap(), 0);
++    }
+ }
+diff --git a/crates/xodus-cli/src/commands/subscription.rs b/crates/xodus-cli/src/commands/subscription.rs
+index 2e95106..6c04996 100644
+--- a/crates/xodus-cli/src/commands/subscription.rs
++++ b/crates/xodus-cli/src/commands/subscription.rs
+@@ -104,7 +104,7 @@ pub(super) async fn store_session(
+     if tokens.get_user().map_err(|_| "stored-account")?.username != account {
+         return Err("account-changed");
+     }
+-    let client = reqwest::Client::builder()
++    let client = xodus::http::client_builder()
+         .redirect(reqwest::redirect::Policy::none())
+         .timeout(super::session::REQUEST_TIMEOUT)
+         .user_agent("Xodus-Nexus-membership/0.2.3")
+diff --git a/crates/xodus-cli/src/main.rs b/crates/xodus-cli/src/main.rs
+index 1ae4167..c1bae3e 100644
+--- a/crates/xodus-cli/src/main.rs
++++ b/crates/xodus-cli/src/main.rs
+@@ -139,6 +139,18 @@ enum SubCommand {
+         #[arg(short, long)]
+         market: Option<String>,
+     },
++    #[command(about = "Prepare a decrypted launch view for a host that starts Wine itself (launch handoff v1)")]
++    PrepareLaunch {
++        source: String,
++        #[arg(short, long)]
++        exe: Option<String>,
++        #[arg(short, long)]
++        market: Option<String>,
++        #[arg(long, help = "Private directory for the temporary launch view")]
++        view_root: Option<String>,
++        #[arg(long, default_value_t = false, help = "Delete views left behind by an interrupted launch first")]
++        sweep_stale_views: bool,
++    },
+     #[command(about = "Generate or decrypt base64-encoded CLEP challenge data")]
+     Clep {
+         #[command(subcommand)]
+@@ -205,7 +217,7 @@ async fn main() -> ExitCode {
+     {
+         registry.init();
+     }
+-    let client = reqwest::ClientBuilder::new()
++    let client = xodus::http::client_builder()
+         .user_agent(format!("xodus-cli/{}", env!("CARGO_PKG_VERSION")))
+         .connection_verbose(true)
+         .build()
+@@ -369,6 +381,36 @@ async fn main() -> ExitCode {
+                 materialize_exe,
+                 materialize_chain,
+                 market,
++                None,
++            )
++            .await
++        }
++        SubCommand::PrepareLaunch {
++            source,
++            exe,
++            market,
++            view_root,
++            sweep_stale_views,
++        } => {
++            let view_root = view_root.map(std::path::PathBuf::from);
++            if sweep_stale_views {
++                if let Some(root) = &view_root {
++                    if let Err(error) = commands::run::sweep_stale_views(root) {
++                        eprintln!("failed to remove stale launch views: {error}");
++                        return ExitCode::FAILURE;
++                    }
++                }
++            }
++            commands::run::run(
++                &client,
++                &tokens,
++                source,
++                String::new(),
++                exe,
++                true,
++                true,
++                market,
++                Some(commands::run::Handoff { view_root }),
+             )
+             .await
+         }
+diff --git a/crates/xodus-service/Cargo.toml b/crates/xodus-service/Cargo.toml
+index 3d44b51..ddfb0ea 100644
+--- a/crates/xodus-service/Cargo.toml
++++ b/crates/xodus-service/Cargo.toml
+@@ -20,3 +20,6 @@ base64 = { workspace = true }
+ 
+ [features]
+ tokio_console = ["dep:console-subscriber"]
++
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xodus_android)', 'cfg(tokio_unstable)'] }
+diff --git a/crates/xodus-service/src/main.rs b/crates/xodus-service/src/main.rs
+index ac8d836..d6c55b3 100644
+--- a/crates/xodus-service/src/main.rs
++++ b/crates/xodus-service/src/main.rs
+@@ -46,7 +46,7 @@ async fn main() {
+     }
+     let tokens = Arc::new(TokenManager::with_keychain_and_memory());
+     if let Err(error) =
+-        xodus::tokens::device::ensure_device_credentials(&reqwest::Client::new(), &tokens).await
++        xodus::tokens::device::ensure_device_credentials(&xodus::http::client(), &tokens).await
+     {
+         error.report();
+         std::process::exit(1);
+diff --git a/crates/xodus-service/src/simple_context.rs b/crates/xodus-service/src/simple_context.rs
+index 2900465..64d2bba 100644
+--- a/crates/xodus-service/src/simple_context.rs
++++ b/crates/xodus-service/src/simple_context.rs
+@@ -13,7 +13,7 @@ pub struct SimpleContext {
+ 
+ impl SimpleContext {
+     pub fn new(device_token: LegacyToken, tokens: Arc<TokenManager>) -> Self {
+-        let client = reqwest::ClientBuilder::new()
++        let client = xodus::http::client_builder()
+             .user_agent(format!("xodus-service/{}", env!("CARGO_PKG_VERSION")))
+             .connection_verbose(true)
+             .build()
+diff --git a/crates/xodus-service/src/utils.rs b/crates/xodus-service/src/utils.rs
+index 1cd44e8..826f87c 100644
+--- a/crates/xodus-service/src/utils.rs
++++ b/crates/xodus-service/src/utils.rs
+@@ -3,6 +3,15 @@ pub fn get_runtime_dir() -> String {
+     std::env::var("XDG_RUNTIME_DIR").expect("Runtime dir not set")
+ }
+ 
++// The Android host app sets XDG_RUNTIME_DIR to a private per-session
++// directory; there is no /run/user, and /tmp is not writable for apps.
++#[cfg(target_os = "android")]
++pub fn get_runtime_dir() -> String {
++    std::env::var("XDG_RUNTIME_DIR")
++        .or_else(|_| std::env::var("TMPDIR"))
++        .expect("XDG_RUNTIME_DIR or TMPDIR must be set")
++}
++
+ #[cfg(target_os = "macos")]
+ pub fn get_runtime_dir() -> String {
+     return "/tmp/".to_string();
+diff --git a/crates/xodus/Cargo.toml b/crates/xodus/Cargo.toml
+index 1ac1031..ff733da 100644
+--- a/crates/xodus/Cargo.toml
++++ b/crates/xodus/Cargo.toml
+@@ -39,17 +39,25 @@ kryptering = "0.5.0"
+ fs2 = "=0.4.3"
+ libc = "=0.2.189"
+ 
+-[target.'cfg(not(target_os = "linux"))'.dependencies]
++[target.'cfg(not(any(target_os = "linux", target_os = "android")))'.dependencies]
+ smbios-lib = "0.9.4"
+ 
+-[target.'cfg(target_os = "linux")'.dependencies]
++# xodus_android (set by tools/build-xodus.sh for aarch64-linux-android, or via
++# RUSTFLAGS="--cfg xodus_android" for host-side testing of the Android paths)
++# replaces the desktop keyring with a private file store.
++[target.'cfg(all(target_os = "linux", not(xodus_android)))'.dependencies]
+ dbus = "=0.9.12"
+ dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-openssl"]}
+ 
++# Android has no system OpenSSL; xal's reqwest 0.11 uses native-tls (OpenSSL).
++[target.'cfg(target_os = "android")'.dependencies]
++openssl = { version = "0.10", features = ["vendored"] }
++
+ [target.'cfg(target_os = "macos")'.dependencies]
+ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"]}
+ 
+ [dev-dependencies]
++tempfile = "3.27.0"
+ rsa = "0.9.10"
+ bergshamra = "0.8.0"
+ ed25519-dalek = "3.0.0"
+@@ -59,3 +67,6 @@ prost-build = "0.14.4"
+ 
+ [features]
+ key-chain-file = []
++
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xodus_android)', 'cfg(tokio_unstable)'] }
+diff --git a/crates/xodus/src/android_store.rs b/crates/xodus/src/android_store.rs
+new file mode 100644
+index 0000000..a9bd42b
+--- /dev/null
++++ b/crates/xodus/src/android_store.rs
+@@ -0,0 +1,216 @@
++//! Credential store for Android (cfg `xodus_android`).
++//!
++//! Android has neither the Secret Service nor a keychain reachable from a
++//! native executable, so credentials live as one file per entry inside a
++//! private directory (mode 0700). The host app passes the directory through
++//! `XODUS_SECRETS_DIR`; it should sit in the app's internal storage, which the
++//! Android sandbox already isolates from other apps.
++//!
++//! Unlike `keyring_core::sample::Store`, every write is persisted immediately
++//! and atomically (temp file, fsync, rename) and every read goes to disk, so
++//! the CLI and the account service can run at the same time without one
++//! overwriting the other's tokens.
++
++use std::any::Any;
++use std::collections::HashMap;
++use std::fs::{self, OpenOptions};
++use std::io::{ErrorKind, Write};
++use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
++use std::path::{Path, PathBuf};
++use std::sync::Arc;
++
++use keyring_core::api::{CredentialApi, CredentialStoreApi};
++use keyring_core::{Credential, CredentialPersistence, Entry, Error, Result};
++use sha2::{Digest, Sha256};
++
++pub const SECRETS_DIR_ENV: &str = "XODUS_SECRETS_DIR";
++
++#[derive(Debug)]
++pub struct FileStore {
++    root: PathBuf,
++}
++
++impl FileStore {
++    pub fn new(root: impl Into<PathBuf>) -> Result<Arc<Self>> {
++        let root = root.into();
++        fs::create_dir_all(&root).map_err(platform)?;
++        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).map_err(platform)?;
++        Ok(Arc::new(Self { root }))
++    }
++
++    /// `XODUS_SECRETS_DIR`, else `$HOME/.xodus-secrets`.
++    pub fn from_env() -> Result<Arc<Self>> {
++        let root = std::env::var_os(SECRETS_DIR_ENV)
++            .map(PathBuf::from)
++            .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".xodus-secrets")))
++            .ok_or_else(|| {
++                Error::NoStorageAccess(Box::from(format!(
++                    "{SECRETS_DIR_ENV} and HOME are both unset"
++                )))
++            })?;
++        Self::new(root)
++    }
++}
++
++impl CredentialStoreApi for FileStore {
++    fn vendor(&self) -> String {
++        "xodus-android-file-store".into()
++    }
++
++    fn id(&self) -> String {
++        self.root.to_string_lossy().into_owned()
++    }
++
++    fn build(
++        &self,
++        service: &str,
++        user: &str,
++        _modifiers: Option<&HashMap<&str, &str>>,
++    ) -> Result<Entry> {
++        if service.is_empty() || user.is_empty() {
++            return Err(Error::Invalid(
++                "service/user".into(),
++                "must not be empty".into(),
++            ));
++        }
++        let credential: Arc<Credential> = Arc::new(FileCredential {
++            path: self.root.join(entry_file_name(service, user)),
++            service: service.to_string(),
++            user: user.to_string(),
++        });
++        Ok(Entry::new_with_credential(credential))
++    }
++
++    fn as_any(&self) -> &dyn Any {
++        self
++    }
++
++    fn persistence(&self) -> CredentialPersistence {
++        CredentialPersistence::UntilDelete
++    }
++}
++
++#[derive(Debug)]
++struct FileCredential {
++    path: PathBuf,
++    service: String,
++    user: String,
++}
++
++impl CredentialApi for FileCredential {
++    fn set_secret(&self, secret: &[u8]) -> Result<()> {
++        write_atomic(&self.path, secret).map_err(platform)
++    }
++
++    fn get_secret(&self) -> Result<Vec<u8>> {
++        match fs::read(&self.path) {
++            Ok(bytes) => Ok(bytes),
++            Err(error) if error.kind() == ErrorKind::NotFound => Err(Error::NoEntry),
++            Err(error) => Err(platform(error)),
++        }
++    }
++
++    fn delete_credential(&self) -> Result<()> {
++        match fs::remove_file(&self.path) {
++            Ok(()) => Ok(()),
++            Err(error) if error.kind() == ErrorKind::NotFound => Err(Error::NoEntry),
++            Err(error) => Err(platform(error)),
++        }
++    }
++
++    fn get_credential(&self) -> Result<Option<Arc<Credential>>> {
++        // Same contract as the sample store: probe for existence, wrapper is self.
++        self.get_secret()?;
++        Ok(None)
++    }
++
++    fn get_specifiers(&self) -> Option<(String, String)> {
++        Some((self.service.clone(), self.user.clone()))
++    }
++
++    fn as_any(&self) -> &dyn Any {
++        self
++    }
++}
++
++fn entry_file_name(service: &str, user: &str) -> String {
++    let mut hash = Sha256::new();
++    hash.update(service.as_bytes());
++    hash.update([0u8]);
++    hash.update(user.as_bytes());
++    let digest = hash.finalize();
++    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
++    format!("{hex}.secret")
++}
++
++fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
++    let dir = path.parent().ok_or_else(|| std::io::Error::other("secret has no parent"))?;
++    let tmp = dir.join(format!(
++        ".{}.{}.tmp",
++        path.file_name().and_then(|n| n.to_str()).unwrap_or("secret"),
++        std::process::id()
++    ));
++    {
++        let mut file = OpenOptions::new()
++            .write(true)
++            .create(true)
++            .truncate(true)
++            .mode(0o600)
++            .open(&tmp)?;
++        file.write_all(bytes)?;
++        file.sync_all()?;
++    }
++    if let Err(error) = fs::rename(&tmp, path) {
++        let _ = fs::remove_file(&tmp);
++        return Err(error);
++    }
++    if let Ok(dir) = fs::File::open(dir) {
++        let _ = dir.sync_all();
++    }
++    Ok(())
++}
++
++fn platform(error: std::io::Error) -> Error {
++    match error.kind() {
++        ErrorKind::PermissionDenied => Error::NoStorageAccess(Box::new(error)),
++        _ => Error::PlatformFailure(Box::new(error)),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn round_trip_is_visible_to_a_second_store_instance() {
++        let dir = tempfile::tempdir().unwrap();
++        let a = FileStore::new(dir.path()).unwrap();
++        let b = FileStore::new(dir.path()).unwrap();
++        let entry_a = a.build("Xodus Service", "device", None).unwrap();
++        let entry_b = b.build("Xodus Service", "device", None).unwrap();
++        assert!(matches!(entry_b.get_secret(), Err(Error::NoEntry)));
++        entry_a.set_secret(b"\x00binary\xffsecret").unwrap();
++        assert_eq!(entry_b.get_secret().unwrap(), b"\x00binary\xffsecret");
++        entry_b.set_password("replaced").unwrap();
++        assert_eq!(entry_a.get_password().unwrap(), "replaced");
++        entry_a.delete_credential().unwrap();
++        assert!(matches!(entry_b.get_secret(), Err(Error::NoEntry)));
++        assert!(matches!(entry_b.delete_credential(), Err(Error::NoEntry)));
++    }
++
++    #[test]
++    fn entries_are_isolated_and_private() {
++        let dir = tempfile::tempdir().unwrap();
++        let store = FileStore::new(dir.path().join("secrets")).unwrap();
++        store.build("svc", "one", None).unwrap().set_password("1").unwrap();
++        store.build("svc", "two", None).unwrap().set_password("2").unwrap();
++        assert_eq!(store.build("svc", "one", None).unwrap().get_password().unwrap(), "1");
++        let mode = fs::metadata(dir.path().join("secrets")).unwrap().permissions().mode();
++        assert_eq!(mode & 0o777, 0o700);
++        for item in fs::read_dir(dir.path().join("secrets")).unwrap() {
++            let mode = item.unwrap().metadata().unwrap().permissions().mode();
++            assert_eq!(mode & 0o777, 0o600);
++        }
++        assert!(store.build("", "x", None).is_err());
++    }
++}
+diff --git a/crates/xodus/src/hardware.rs b/crates/xodus/src/hardware.rs
+index 228f7ec..192b4c8 100644
+--- a/crates/xodus/src/hardware.rs
++++ b/crates/xodus/src/hardware.rs
+@@ -1,13 +1,13 @@
+ // Hardware probing utilities
+ 
+ use std::io;
+-#[cfg(target_os = "linux")]
++#[cfg(all(target_os = "linux", not(xodus_android)))]
+ use std::process::{Command, Stdio};
+ 
+ use base64::prelude::*;
+ #[cfg(any(target_os = "macos", target_os = "ios", target_family = "windows"))]
+ use smbioslib::raw_smbios_from_device;
+-#[cfg(not(target_os = "linux"))]
++#[cfg(not(any(target_os = "linux", target_os = "android")))]
+ use smbioslib::{SMBiosSystemInformation, SystemUuidData, table_load_from_device};
+ 
+ use crate::clep;
+@@ -75,14 +75,14 @@ pub fn probe_provision_components() -> Vec<Component> {
+     components
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ fn load_smbios_fields(raw: Option<&[u8]>) -> io::Result<(Vec<u8>, Vec<u8>, [u8; 16])> {
+     let smbios =
+         raw.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing raw SMBIOS data"))?;
+     Ok(parse_smbios(smbios))
+ }
+ 
+-#[cfg(not(target_os = "linux"))]
++#[cfg(not(any(target_os = "linux", target_os = "android")))]
+ fn load_smbios_fields(_raw: Option<&[u8]>) -> io::Result<(Vec<u8>, Vec<u8>, [u8; 16])> {
+     let data = table_load_from_device()?;
+     let system_info = data
+@@ -112,7 +112,7 @@ fn load_smbios_fields(_raw: Option<&[u8]>) -> io::Result<(Vec<u8>, Vec<u8>, [u8;
+     Ok((version, serial, uuid))
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ fn parse_smbios(smbios: &[u8]) -> (Vec<u8>, Vec<u8>, [u8; 16]) {
+     let length = smbios[1];
+ 
+@@ -150,7 +150,7 @@ fn load_raw_smbios() -> io::Result<Vec<u8>> {
+     raw_smbios_from_device()
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(all(target_os = "linux", not(xodus_android)))]
+ fn load_raw_smbios() -> io::Result<Vec<u8>> {
+     let cmd = Command::new("pkexec")
+         .args(["cat", "/sys/firmware/dmi/entries/1-0/raw"])
+@@ -172,7 +172,8 @@ fn load_raw_smbios() -> io::Result<Vec<u8>> {
+     target_os = "linux",
+     target_os = "macos",
+     target_os = "ios",
+-    target_family = "windows"
++    target_family = "windows",
++    xodus_android
+ )))]
+ fn load_raw_smbios() -> io::Result<Vec<u8>> {
+     Err(io::Error::new(
+@@ -180,3 +181,152 @@ fn load_raw_smbios() -> io::Result<Vec<u8>> {
+         "raw SMBIOS loading is unsupported on this platform",
+     ))
+ }
++
++/// Android exposes no SMBIOS to apps. Provisioning needs a stable SMBIOS
++/// Type 1 (System Information) record, so one is synthesized once from random
++/// data and persisted; the device license is bound to it, so it must never
++/// change for an installation. Losing it means provisioning a new device.
++#[cfg(xodus_android)]
++fn load_raw_smbios() -> io::Result<Vec<u8>> {
++    android_identity::load_or_create(&android_identity::path()?)
++}
++
++#[cfg(xodus_android)]
++pub mod android_identity {
++    use std::fs;
++    use std::io::{self, Read, Write};
++    use std::os::unix::fs::OpenOptionsExt;
++    use std::path::{Path, PathBuf};
++
++    pub const IDENTITY_FILE_ENV: &str = "XODUS_DEVICE_IDENTITY_FILE";
++    const FILE_NAME: &str = "device-smbios-type1.bin";
++
++    /// `XODUS_DEVICE_IDENTITY_FILE`, else beside the secrets.
++    pub fn path() -> io::Result<PathBuf> {
++        if let Some(path) = std::env::var_os(IDENTITY_FILE_ENV) {
++            return Ok(PathBuf::from(path));
++        }
++        let dir = std::env::var_os(crate::android_store::SECRETS_DIR_ENV)
++            .map(PathBuf::from)
++            .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".xodus-secrets")))
++            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no directory for the device identity"))?;
++        Ok(dir.join(FILE_NAME))
++    }
++
++    pub fn load_or_create(path: &Path) -> io::Result<Vec<u8>> {
++        match fs::read(path) {
++            Ok(bytes) if valid(&bytes) => return Ok(bytes),
++            Ok(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "stored device identity is corrupt")),
++            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
++            Err(_) => {}
++        }
++        let dir = path.parent().ok_or_else(|| io::Error::other("identity path has no parent"))?;
++        fs::create_dir_all(dir)?;
++        let record = synthesize(
++            &random::<16>()?,
++            &hex(&random::<10>()?),
++            &std::env::var("XODUS_DEVICE_MANUFACTURER").unwrap_or_else(|_| "Android".into()),
++            &std::env::var("XODUS_DEVICE_MODEL").unwrap_or_else(|_| "Handheld".into()),
++        );
++        let tmp = dir.join(format!(".{FILE_NAME}.{}.tmp", std::process::id()));
++        {
++            let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
++            file.write_all(&record)?;
++            file.sync_all()?;
++        }
++        // hard_link never replaces: if another process won the race, use its
++        // record. Where links are refused (some SELinux policies), fall back to
++        // a rename, which is only racy against a concurrent first launch.
++        let mut linked = fs::hard_link(&tmp, path);
++        if let Err(error) = &linked {
++            if error.kind() != io::ErrorKind::AlreadyExists && !path.exists() {
++                linked = fs::rename(&tmp, path);
++            }
++        }
++        let _ = fs::remove_file(&tmp);
++        match linked {
++            Ok(()) => Ok(record),
++            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
++                let bytes = fs::read(path)?;
++                if valid(&bytes) { Ok(bytes) } else { Err(io::Error::new(io::ErrorKind::InvalidData, "stored device identity is corrupt")) }
++            }
++            Err(error) => Err(error),
++        }
++    }
++
++    /// SMBIOS 2.4+ Type 1 record: header, string indexes, UUID, then strings.
++    pub fn synthesize(uuid: &[u8; 16], serial: &str, manufacturer: &str, model: &str) -> Vec<u8> {
++        let mut uuid = *uuid;
++        uuid[6] = (uuid[6] & 0x0f) | 0x40; // RFC 4122 version 4
++        uuid[8] = (uuid[8] & 0x3f) | 0x80; // variant
++        let mut record = vec![
++            1, 0x1b, 0x01, 0x00, // type 1, length 27, handle 0x0001
++            1, 2, 3, 4,          // manufacturer, product, version, serial
++        ];
++        record.extend_from_slice(&uuid);
++        record.extend_from_slice(&[6, 5, 6]); // wake-up: power switch; SKU, family
++        for text in [manufacturer, model, "1.0", serial, "Xodus Android", "Android"] {
++            let clean: String = text.chars().filter(|c| c.is_ascii_graphic() || *c == ' ').take(64).collect();
++            record.extend_from_slice(if clean.is_empty() { b"Unknown" } else { clean.as_bytes() });
++            record.push(0);
++        }
++        record.push(0);
++        record
++    }
++
++    pub fn valid(bytes: &[u8]) -> bool {
++        bytes.len() > 0x1b + 6 && bytes[0] == 1 && bytes[1] == 0x1b && bytes.ends_with(&[0, 0])
++            && bytes[6] != 0 && bytes[7] != 0 && bytes[8..24].iter().any(|b| *b != 0)
++    }
++
++    fn random<const N: usize>() -> io::Result<[u8; N]> {
++        let mut bytes = [0u8; N];
++        fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
++        Ok(bytes)
++    }
++
++    fn hex(bytes: &[u8]) -> String {
++        bytes.iter().map(|b| format!("{b:02X}")).collect()
++    }
++
++    #[cfg(test)]
++    mod tests {
++        use super::*;
++
++        #[test]
++        fn synthesized_record_round_trips_through_the_linux_parser() {
++            let uuid = [7u8; 16];
++            let record = synthesize(&uuid, "ABCDEF0123", "Ayn", "Odin 3");
++            assert!(valid(&record));
++            let (version, serial, parsed_uuid) = super::super::parse_smbios(&record);
++            assert_eq!(version, b"1.0");
++            assert_eq!(serial, b"ABCDEF0123");
++            assert_eq!(parsed_uuid[0], 7);
++            assert_eq!(parsed_uuid[6] & 0xf0, 0x40);
++        }
++
++        #[test]
++        fn identity_is_created_once_and_then_stable() {
++            let dir = tempfile::tempdir().unwrap();
++            let path = dir.path().join("nested/identity.bin");
++            let first = load_or_create(&path).unwrap();
++            let second = load_or_create(&path).unwrap();
++            assert_eq!(first, second);
++            fs::write(&path, b"broken").unwrap();
++            assert!(load_or_create(&path).is_err(), "never silently replace a bound identity");
++        }
++
++        #[test]
++        fn provisioning_components_carry_the_synthetic_record() {
++            let dir = tempfile::tempdir().unwrap();
++            // SAFETY: test-only, single-threaded use of this variable.
++            unsafe { std::env::set_var(IDENTITY_FILE_ENV, dir.path().join("id.bin")) };
++            let components = super::super::probe_provision_components();
++            unsafe { std::env::remove_var(IDENTITY_FILE_ENV) };
++            let json = serde_json::to_string(&components).unwrap();
++            // 4100 (version), 4101 (serial) and 4102 (UUID) must not be error entries.
++            assert!(json.matches("4102").count() >= 1);
++            assert!(dir.path().join("id.bin").exists());
++        }
++    }
++}
+diff --git a/crates/xodus/src/http.rs b/crates/xodus/src/http.rs
+new file mode 100644
+index 0000000..e38cae6
+--- /dev/null
++++ b/crates/xodus/src/http.rs
+@@ -0,0 +1,151 @@
++//! HTTP client construction.
++//!
++//! Every reqwest client in the backend is built here so trust roots can be
++//! configured per platform. On desktop this is plain `reqwest::Client::builder()`.
++//!
++//! On Android (cfg `xodus_android`) reqwest's default rustls verifier,
++//! rustls-platform-verifier, needs a JVM handle that a standalone native
++//! executable does not have and panics on first use. Instead the client trusts
++//! exactly the roots Android itself ships, read from disk:
++//!
++//! 1. `SSL_CERT_FILE` (a PEM bundle), if set and readable;
++//! 2. every file in `SSL_CERT_DIR` (colon separated), if set;
++//! 3. the updatable Conscrypt store and the system store:
++//!    `/apex/com.android.conscrypt/cacerts`, `/system/etc/security/cacerts`.
++//!
++//! The same variables steer OpenSSL, which xal's older reqwest uses for sign-in,
++//! so the host app should export `SSL_CERT_FILE` for both.
++
++pub fn client_builder() -> reqwest::ClientBuilder {
++    let builder = reqwest::Client::builder();
++    #[cfg(xodus_android)]
++    let builder = android_roots::apply(builder);
++    builder
++}
++
++/// Equivalent of `reqwest::Client::new()` with platform trust applied.
++pub fn client() -> reqwest::Client {
++    client_builder()
++        .build()
++        .expect("failed to build the HTTP client")
++}
++
++#[cfg(xodus_android)]
++pub mod android_roots {
++    use std::path::{Path, PathBuf};
++    use std::sync::OnceLock;
++
++    pub const SYSTEM_DIRS: [&str; 2] = [
++        "/apex/com.android.conscrypt/cacerts",
++        "/system/etc/security/cacerts",
++    ];
++
++    static ROOTS: OnceLock<Vec<reqwest::Certificate>> = OnceLock::new();
++
++    pub fn apply(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
++        let roots = ROOTS.get_or_init(|| {
++            let roots = load(
++                std::env::var_os("SSL_CERT_FILE").map(PathBuf::from).as_deref(),
++                std::env::var_os("SSL_CERT_DIR")
++                    .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
++                    .unwrap_or_default(),
++                SYSTEM_DIRS.iter().map(PathBuf::from).collect(),
++            );
++            if roots.is_empty() {
++                tracing::error!("no trusted root certificates found; TLS connections will fail");
++            } else {
++                tracing::debug!("loaded {} trusted root certificates", roots.len());
++            }
++            roots
++        });
++        // Only these roots: never fall through to the JVM-backed verifier.
++        builder.tls_certs_only(roots.iter().cloned())
++    }
++
++    /// The bundle wins when it yields certificates; otherwise directories are
++    /// scanned, explicit ones before the system defaults.
++    pub fn load(
++        bundle: Option<&Path>,
++        dirs: Vec<PathBuf>,
++        defaults: Vec<PathBuf>,
++    ) -> Vec<reqwest::Certificate> {
++        if let Some(bundle) = bundle {
++            if let Ok(bytes) = std::fs::read(bundle) {
++                let certs = parse(&bytes);
++                if !certs.is_empty() {
++                    return certs;
++                }
++            }
++        }
++        let mut certs = Vec::new();
++        for dir in dirs.into_iter().chain(defaults) {
++            let Ok(items) = std::fs::read_dir(&dir) else { continue };
++            let mut paths: Vec<_> = items.filter_map(|item| item.ok().map(|item| item.path())).collect();
++            paths.sort();
++            for path in paths {
++                if let Ok(bytes) = std::fs::read(&path) {
++                    certs.extend(parse(&bytes));
++                }
++            }
++            if !certs.is_empty() {
++                break;
++            }
++        }
++        certs
++    }
++
++    /// Android's cacerts files hold one PEM block plus an OpenSSL text dump;
++    /// only the PEM block is used. Unparseable files are skipped.
++    fn parse(bytes: &[u8]) -> Vec<reqwest::Certificate> {
++        reqwest::Certificate::from_pem_bundle(bytes).unwrap_or_default()
++    }
++
++    #[cfg(test)]
++    mod tests {
++        use super::*;
++
++        fn system_bundle() -> Option<Vec<u8>> {
++            ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"]
++                .iter()
++                .find_map(|path| std::fs::read(path).ok())
++        }
++
++        fn first_pem(bundle: &[u8]) -> String {
++            let text = String::from_utf8_lossy(bundle);
++            let start = text.find("-----BEGIN CERTIFICATE-----").unwrap();
++            let end = text[start..].find("-----END CERTIFICATE-----").unwrap() + start + 25;
++            text[start..end].to_string()
++        }
++
++        #[test]
++        fn android_style_directory_is_parsed_and_noise_ignored() {
++            let Some(bundle) = system_bundle() else { return };
++            let dir = tempfile::tempdir().unwrap();
++            // Android layout: PEM followed by a text dump, hashed file names.
++            std::fs::write(
++                dir.path().join("5ad8a5d6.0"),
++                format!("{}\nCertificate:\n    Data:\n        Version: 3 (0x2)\nSHA1 Fingerprint=00:11\n", first_pem(&bundle)),
++            ).unwrap();
++            std::fs::write(dir.path().join("garbage.0"), "not a certificate").unwrap();
++            let certs = load(None, vec![], vec![dir.path().to_path_buf()]);
++            assert_eq!(certs.len(), 1);
++        }
++
++        #[test]
++        fn bundle_has_priority_and_empty_inputs_yield_nothing() {
++            let Some(bundle) = system_bundle() else { return };
++            let dir = tempfile::tempdir().unwrap();
++            let file = dir.path().join("bundle.pem");
++            std::fs::write(&file, &bundle).unwrap();
++            assert!(load(Some(&file), vec![], vec![]).len() > 10);
++            assert!(load(Some(&dir.path().join("missing")), vec![], vec![dir.path().join("none")]).is_empty());
++        }
++
++        #[test]
++        fn client_builds_with_explicit_roots() {
++            let Some(_) = system_bundle() else { return };
++            // Must not touch rustls-platform-verifier (which panics on Android).
++            let _ = super::super::client();
++        }
++    }
++}
+diff --git a/crates/xodus/src/lib.rs b/crates/xodus/src/lib.rs
+index 133a2ed..13c4c20 100644
+--- a/crates/xodus/src/lib.rs
++++ b/crates/xodus/src/lib.rs
+@@ -1,7 +1,13 @@
++#[cfg(all(target_os = "android", not(xodus_android)))]
++compile_error!("Android builds need RUSTFLAGS=\"--cfg xodus_android\" (see tools/build-xodus.sh)");
++
++#[cfg(xodus_android)]
++pub mod android_store;
+ pub mod api;
+ pub mod auth;
+ pub mod clep;
+ pub mod hardware;
++pub mod http;
+ pub mod licensing;
+ pub mod models;
+ pub mod secrets;
+diff --git a/crates/xodus/src/secrets.rs b/crates/xodus/src/secrets.rs
+index 50cd884..5f888de 100644
+--- a/crates/xodus/src/secrets.rs
++++ b/crates/xodus/src/secrets.rs
+@@ -13,7 +13,12 @@ pub fn init_secrets() -> Result<(), keyring_core::Error> {
+ 
+     #[cfg(not(feature = "key-chain-file"))]
+     {
+-        #[cfg(target_os = "linux")]
++        #[cfg(xodus_android)]
++        {
++            keyring_core::set_default_store(crate::android_store::FileStore::from_env()?);
++        }
++
++        #[cfg(all(target_os = "linux", not(xodus_android)))]
+         {
+             activate_desktop_keyring();
+             keyring_core::set_default_store(dbus_secret_service_keyring_store::Store::new()?);
+@@ -24,7 +29,7 @@ pub fn init_secrets() -> Result<(), keyring_core::Error> {
+             keyring_core::set_default_store(apple_native_keyring_store::keychain::Store::new()?);
+         }
+ 
+-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
++        #[cfg(not(any(target_os = "linux", target_os = "macos", xodus_android)))]
+         {
+             let store = keyring_core::sample::Store::new_with_configuration(
+                 &std::collections::HashMap::from([("persist", "true")]),
+@@ -39,7 +44,7 @@ pub fn init_secrets() -> Result<(), keyring_core::Error> {
+ // Some KDE installations advertise ksecretd only under its compatibility
+ // activation name. Respect an existing/default Secret Service provider first.
+ // This starts a packaged user service, never installs or configures a keyring.
+-#[cfg(all(target_os = "linux", not(feature = "key-chain-file")))]
++#[cfg(all(target_os = "linux", not(xodus_android), not(feature = "key-chain-file")))]
+ fn activate_desktop_keyring() {
+     use dbus::blocking::Connection;
+     use std::time::Duration;
+-- 
+2.43.0
+
